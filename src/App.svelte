@@ -11,7 +11,6 @@ type Pick = Entry & { kind: Subject['kind'] };
 
 let kinds: { hero: Kind; item: Kind | null } | null = null;
 let navboxes = $state.raw<{ hero: Navbox; item: Navbox | null } | null>(null);
-let pickerOpen = $state(false);
 
 let status = $state({ text: 'Loading revision list…', error: false });
 const setStatus = (text: string, error = false) => {
@@ -131,7 +130,7 @@ void (async () => {
         <!-- eslint-disable-next-line svelte/no-at-html-tags -- the navbox HTML is the wiki's own render, like the cards -->
         {#if thumb}{@html thumb}{:else}{picked?.name}{/if}
       </div>
-      <button type="button" onclick={() => (pickerOpen = true)}>Select</button>
+      <Picker {navboxes} current={picked} onpick={pickKey} />
     </div>
     <label>
       Old
@@ -155,10 +154,6 @@ void (async () => {
 <main>
   {#if subject}<Comparison {subject} {sides} {highlight} />{/if}
 </main>
-
-{#if navboxes}
-  <Picker bind:open={pickerOpen} heroes={navboxes.hero} items={navboxes.item} current={picked} onpick={pickKey} />
-{/if}
 
 <style>
 header {

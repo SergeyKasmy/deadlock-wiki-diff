@@ -53,7 +53,8 @@ export interface ItemCard {
   Name?: string;
   Cost?: number;
   Tier?: number;
-  IsDisabled?: boolean;
+  /** a boolean in Data:ItemCards.json; converted legacy cards pass Data:ItemData.json's flag through as it is */
+  IsDisabled?: unknown;
   StreetBrawl?: boolean;
   Other?: Record<string, { Value?: unknown }>;
   Upgrades?: Record<string, unknown>;

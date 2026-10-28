@@ -10,10 +10,14 @@ function textNodes(root: Element): Text[] {
 
 /** Indices of `a` and `b` that are not part of their longest common subsequence. */
 export function lcsUnmatched<T>(a: readonly T[], b: readonly T[]): [Set<number>, Set<number>] {
-  // lcs(i, j): the LCS length of a[i..] and b[j..], in one flat table; out-of-range cells are 0
+  // lcs(i, j): the LCS length of a[i..] and b[j..], in one flat table; the last row and column are the empty-suffix 0s
   const width = b.length + 1;
   const table = new Uint16Array((a.length + 1) * width);
-  const lcs = (i: number, j: number) => table[i * width + j] ?? 0;
+  const lcs = (i: number, j: number) => {
+    const v = table[i * width + j];
+    if (v === undefined) throw new RangeError(`LCS cell (${i}, ${j}) is outside the ${a.length + 1}x${width} table`);
+    return v;
+  };
   for (let i = a.length - 1; i >= 0; i--) {
     for (let j = b.length - 1; j >= 0; j--) {
       table[i * width + j] = a[i] === b[j] ? lcs(i + 1, j + 1) + 1 : Math.max(lcs(i + 1, j), lcs(i, j + 1));
@@ -40,8 +44,7 @@ function clearMarks(card: Element) {
   card.normalize();
 }
 
-function mark(node: Text | undefined, cls: string, card: Element) {
-  if (!node) return;
+function mark(node: Text, cls: string, card: Element) {
   // gadget-managed value elements get the class itself: the gadget parseFloat()s their innerHTML, so nothing may be wrapped inside
   const holder = node.parentElement?.closest('.ability-attr');
   if (holder && card.contains(holder)) holder.classList.add(cls);
@@ -61,10 +64,6 @@ export function highlightDiff(old: Element | undefined, cur: Element | undefined
   const oldNodes = textNodes(old), curNodes = textNodes(cur);
   const text = (n: Text) => n.data.trim();
   const [removed, added] = lcsUnmatched(oldNodes.map(text), curNodes.map(text));
-  removed.forEach((k) => {
-    mark(oldNodes[k], 'diff-del', old);
-  });
-  added.forEach((k) => {
-    mark(curNodes[k], 'diff-add', cur);
-  });
+  for (const n of oldNodes.filter((_, k) => removed.has(k))) mark(n, 'diff-del', old);
+  for (const n of curNodes.filter((_, k) => added.has(k))) mark(n, 'diff-add', cur);
 }

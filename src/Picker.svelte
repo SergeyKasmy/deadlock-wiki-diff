@@ -2,25 +2,23 @@
 import type { Navbox } from './lib/navbox.ts';
 
 interface Props {
-  heroes: Navbox;
-  items: Navbox | null;
+  /** null until the navboxes have loaded, which keeps the Select button disabled */
+  navboxes: { hero: Navbox; item: Navbox | null } | null;
   /** the current pick; the dialog opens on its tab */
   current: { key: string; kind: 'hero' | 'item' } | null;
-  open?: boolean;
   onpick: (key: string) => void;
 }
-let { heroes, items, current, open = $bindable(false), onpick }: Props = $props();
+let { navboxes, current, onpick }: Props = $props();
 
 let dialog = $state<HTMLDialogElement>();
-let tab = $state<'heroes' | 'items'>('heroes');
+let tab = $state<'hero' | 'item'>('hero');
+const items = $derived(navboxes?.item ?? null);
+const html = $derived((tab === 'item' && items ? items : navboxes?.hero)?.html ?? '');
 
-$effect(() => {
-  if (!dialog || open === dialog.open) return;
-  if (open) {
-    tab = current?.kind === 'item' && items ? 'items' : 'heroes';
-    dialog.showModal();
-  } else dialog.close();
-});
+function open() {
+  tab = current?.kind === 'item' && items ? 'item' : 'hero';
+  dialog?.showModal();
+}
 
 // the grid is wiki HTML, so the current pick is marked on it directly
 const grid = (html: string) => (el: HTMLElement) => {
@@ -30,28 +28,38 @@ const grid = (html: string) => (el: HTMLElement) => {
 
 function click(e: MouseEvent) {
   if (e.target === dialog) {
-    open = false; // backdrop click
+    dialog.close(); // backdrop click
     return;
   }
   const key = e.target instanceof Element ? e.target.closest<HTMLElement>('[data-pick]')?.dataset['pick'] : undefined;
   if (key === undefined) return;
-  open = false;
+  dialog?.close();
   onpick(key);
 }
 </script>
 
-<!-- onclose: Escape closes the dialog without going through `open` -->
-<dialog bind:this={dialog} onclick={click} onclose={() => (open = false)}>
+<button type="button" class="select" disabled={!navboxes} onclick={open}>Select</button>
+
+<dialog bind:this={dialog} onclick={click}>
   {#if items}
     <div class="tabs">
-      <button type="button" class:active={tab === 'heroes'} onclick={() => (tab = 'heroes')}>Heroes</button>
-      <button type="button" class:active={tab === 'items'} onclick={() => (tab = 'items')}>Items</button>
+      <button type="button" class:active={tab === 'hero'} onclick={() => (tab = 'hero')}>Heroes</button>
+      <button type="button" class:active={tab === 'item'} onclick={() => (tab = 'item')}>Items</button>
     </div>
   {/if}
-  <div class="mw-parser-output" {@attach grid(tab === 'items' && items ? items.html : heroes.html)}></div>
+  <div class="mw-parser-output" {@attach grid(html)}></div>
 </dialog>
 
 <style>
+.select {
+  background: #232323;
+  color: inherit;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font: inherit;
+  cursor: pointer;
+}
 dialog {
   background: #1b1b1b;
   color: inherit;

@@ -76,8 +76,7 @@ function hoistHeaders(slice: HeroAbilities): HeroAbilities {
  * is always distance / duration rounded to 0.1 (true for every hero in the current data), so it is derived for older
  * revisions.
  */
-function fillDashSpeeds(hd: HeroStats | undefined): HeroStats | undefined {
-  if (!hd) return hd;
+function fillDashSpeeds(hd: HeroStats | undefined): HeroStats {
   const out = { ...hd };
   for (const m of ['Ground', 'Air']) {
     const dist = out[`${m}DashDistanceInMeters`], dur = out[`${m}DashDuration`];

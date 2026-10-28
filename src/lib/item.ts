@@ -30,8 +30,7 @@ function legacyToCard(old: LegacyItem, layout: ItemCard): ItemCard {
     'ShopFilters',
   ];
   for (const k of fields) if (k in old) card[k] = num(old[k]);
-  // passed through as the old file has it: its flag type is not known for every patch
-  (card as Record<string, unknown>)['IsDisabled'] = old['IsDisabled'] ?? old['Disabled'] ?? false;
+  card.IsDisabled = old['IsDisabled'] ?? old['Disabled'] ?? false;
   for (const info of Object.values(card).filter(hasStatLists)) {
     for (const list of ['Main', 'Alt'] as const) {
       const lines = info[list];

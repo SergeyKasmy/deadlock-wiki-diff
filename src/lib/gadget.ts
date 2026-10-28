@@ -3,12 +3,19 @@
 
 import { type Ability, INFOS, type Scale } from './data.ts';
 
-const UPGRADE_COSTS = [1, 2, 5]; // ability points per upgrade tier; the wiki ids the boxes by cost
+interface Tier {
+  /** position in the ability's `Upgrades`, and the `RequiresUpgradeIndex` of info blocks it reveals */
+  index: number;
+  /** ability points; the wiki ids the upgrade boxes by it */
+  cost: number;
+  enabled: boolean;
+}
+const UPGRADE_COSTS = [1, 2, 5];
 // without `digits`, small numbers are kept as is and only |n| >= 1 is rounded, as in the wiki's gadget
 const round = (n: number, digits?: number) => Math.abs(n) >= 1 ? Number(n.toFixed(3)) : Number(n.toPrecision(digits));
 
 export function attachGadget(card: HTMLElement, ability: Ability, onChange: () => void): void {
-  const enabled = [false, false, false];
+  const tiers: Tier[] = UPGRADE_COSTS.map((cost, index) => ({ index, cost, enabled: false }));
   const original = new Map<string, string>(); // innerHTML before any upgrade, to revert to
   const boxes = [...card.querySelectorAll<HTMLElement>('.ability-upgrade')];
   const tierOf = (box: HTMLElement) => Number(box.dataset['index']);
@@ -48,9 +55,11 @@ export function attachGadget(card: HTMLElement, ability: Ability, onChange: () =
       ?.classList.toggle('hide', elem.innerHTML.trim() === '0');
   }
 
-  function toggle(i: number, enable: boolean) {
+  function toggle(tier: Tier, enable: boolean) {
+    const i = tier.index;
     const info = INFOS.findIndex((k) => ability[k]?.RequiresUpgradeIndex === i);
     if (info >= 0) card.querySelector(`#ability-info${info + 1}`)?.classList.toggle('hide', !enable);
+    // old revisions can have fewer upgrades than the card shows boxes
     for (const [key, v] of Object.entries(ability.Upgrades[i] ?? {})) {
       const value = typeof v === 'object' ? v.Value : v;
       const multiply = typeof v === 'object' && (v.Multiply ?? false);
@@ -68,17 +77,18 @@ export function attachGadget(card: HTMLElement, ability: Ability, onChange: () =
         updateElem(`${i}-${key}-${n}`, el.querySelector('b') ?? el, value, !enable, multiply);
       });
     }
-    enabled[i] = enable;
-    card.querySelector(`#ability-upgrade-${UPGRADE_COSTS[i] ?? ''}`)?.classList.toggle('selected', enable);
+    tier.enabled = enable;
+    card.querySelector(`#ability-upgrade-${tier.cost}`)?.classList.toggle('selected', enable);
   }
 
+  // enabling a tier also enables the ones below it, disabling one also disables the ones above it
   function click(box: HTMLElement) {
-    const i = UPGRADE_COSTS.indexOf(Number(box.id.replace('ability-upgrade-', '')));
-    if (i < 0) return;
-    if (enabled[i] === true) {
-      for (let j = 2; j >= i; j--) if (enabled[j] === true) toggle(j, false);
+    const tier = tiers.find((t) => box.id === `ability-upgrade-${t.cost}`);
+    if (!tier) return;
+    if (tier.enabled) {
+      for (const t of tiers.slice(tier.index).reverse()) if (t.enabled) toggle(t, false);
     } else {
-      for (let j = 0; j <= i; j++) if (enabled[j] === false) toggle(j, true);
+      for (const t of tiers.slice(0, tier.index + 1)) if (!t.enabled) toggle(t, true);
     }
     unhover();
     hover(box);

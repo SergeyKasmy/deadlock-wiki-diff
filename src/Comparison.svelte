@@ -56,10 +56,9 @@ const title = (slot: number) =>
   <section>
   <h2>{title(slot)}</h2>
   <div class="pair">
-      {#each sides as rendering, side (side)}
-        <div class="side mw-parser-output" {@attach mount(side === 0 ? 0 : 1, slot, rendering?.cards[slot])}></div>
-      {/each}
-    </div>
+    <div class="side mw-parser-output" {@attach mount(0, slot, sides[0]?.cards[slot])}></div>
+    <div class="side mw-parser-output" {@attach mount(1, slot, sides[1]?.cards[slot])}></div>
+  </div>
 </section>
 {/each}
 

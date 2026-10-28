@@ -13,7 +13,6 @@ export default defineConfig(
   svelte.configs.recommended,
   {
     languageOptions: {
-      globals: globals.browser,
       parserOptions: {
         // two projects: the app runs in the browser, the config files in Deno/Node
         project: ['./tsconfig.json', './tsconfig.node.json'],
@@ -22,6 +21,9 @@ export default defineConfig(
       },
     },
   },
+  // each side gets only its own globals, so e.g. `document` in a config file is an error
+  { files: ['src/**'], languageOptions: { globals: globals.browser } },
+  { files: ['*.config.{js,ts}'], languageOptions: { globals: globals.node } },
   {
     files: ['**/*.svelte'],
     languageOptions: { parserOptions: { parser: ts.parser } },
