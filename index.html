@@ -369,6 +369,7 @@ function fillRevisionSelects() {
   const releaseRev = revs.find(r => Date.parse(r.timestamp) >= released); // NaN (no date) matches nothing
   const opts = revs.map(r => `<option value="${r.revid}">${r.timestamp.slice(0, 10)} · ${r.comment.replace(/^deadbot /i, '')} · r${r.revid}${r === releaseRev ? ' · ★ release' : ''}</option>`).join('');
   [0, 1].forEach(s => { $('sel-' + s).innerHTML = opts; });
+  return revs.indexOf(releaseRev); // -1 without a release date
 }
 
 // Every hero that has ability data and is playable; read from the wiki's current data, so new heroes show up on their own.
@@ -427,9 +428,9 @@ async function selectHero(key) {
     buildRows();
     const first = await firstRevisionWith(key);
     if (gen !== heroGen) return;
-    revs = allRevs.slice(first); // from the revision where the hero got its abilities (Seven: the start of the history)
-    fillRevisionSelects();
-    $('sel-0').selectedIndex = 0;
+    revs = allRevs.slice(first); // the list starts where the hero got its abilities (Seven: the start of the history)
+    // Old defaults to the release revision (earlier ones are pre-release data), or the first one without a date
+    $('sel-0').selectedIndex = Math.max(0, fillRevisionSelects());
     $('sel-1').selectedIndex = revs.length - 1;
     loadSide(0); loadSide(1);
   } catch (e) { setStatus(`Failed to load ${h.name}: ${e.message}`, true); }
