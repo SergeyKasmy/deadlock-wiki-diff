@@ -197,45 +197,54 @@ export async function heroKind(): Promise<Kind> {
     const render = memo(async (revid: number, signal): Promise<Rendering> => {
       const patch = revisions.find((r) => r.revid === revid);
       if (!patch) throw new Error(`r${revid} is not a ${hero.name} revision`);
-      const slice = hoistHeaders(structuredClone(await abilitiesAt(revid, signal)));
-      // only the hero's slice is sent: it renders identically to the full file, but ~100x smaller
-      const { css, cards } = await renderAbilities(PAGES.abilities, { [hero.key]: slice }, slice, signal);
+      // The three renders don't depend on each other and each takes 0.5-1.5 s, so they run at the same time; when one
+      // fails the others are cancelled instead of loading the wiki for nothing.
+      const done = new AbortController();
+      const sig = AbortSignal.any([signal, done.signal]);
+      try {
+        const abilities = abilitiesAt(revid, sig).then(async (data) => {
+          const slice = hoistHeaders(structuredClone(data));
+          // only the hero's slice is sent: it renders identically to the full file, but ~100x smaller
+          return { slice, ...(await renderAbilities(PAGES.abilities, { [hero.key]: slice }, slice, sig)) };
+        });
+        const langPatch = matchRevision(langPatches, patch);
+        // the newest translations are what the renderer already used
+        const oldTexts = langPatch && langPatch !== langPatches.at(-1)
+          ? Promise.all([renderWithLang(langPatch.revid, sig), abilitiesAt(latest.revid, sig)]).catch((e: unknown) => {
+            sig.throwIfAborted();
+            console.warn('old translations unavailable, showing current texts', e);
+            return null;
+          })
+          : null;
+        const heroCardP = renderHeroCard(patch, sig).catch((e: unknown) => {
+          sig.throwIfAborted();
+          console.warn('hero card unavailable', e);
+          return null;
+        });
+        const [{ slice, css, cards }, texts, heroCard] = await Promise.all([abilities, oldTexts, heroCardP]);
 
-      const langPatch = matchRevision(langPatches, patch);
-      // the newest translations are what the renderer already used
-      if (langPatch && langPatch !== langPatches.at(-1)) {
-        try {
-          const [langCards, current] = await Promise.all([
-            renderWithLang(langPatch.revid, signal),
-            abilitiesAt(latest.revid, signal),
-          ]);
+        if (texts) {
+          const [langCards, current] = texts;
           slots.forEach((s, i) => {
             const card = cards[i], langCard = langCards[i], oldAb = slice[s], curAb = current[s];
             if (card && langCard && oldAb && curAb) spliceDescriptions(card, langCard, oldAb, curAb);
           });
-        } catch (e) {
-          signal.throwIfAborted();
-          console.warn('old translations unavailable, showing current texts', e);
         }
+        return {
+          css: heroCard ? `${css}\n${heroCard.css}` : css,
+          cards: [
+            heroCard && { html: heroCard.html },
+            ...slots.map((s, i) => {
+              const card = cards[i], ability = slice[s];
+              return card && ability
+                ? { html: card.outerHTML, title: card.querySelector('.ac-name')?.textContent ?? '', ability }
+                : null;
+            }),
+          ],
+        };
+      } finally {
+        done.abort();
       }
-
-      const heroCard = await renderHeroCard(patch, signal).catch((e: unknown) => {
-        signal.throwIfAborted();
-        console.warn('hero card unavailable', e);
-        return null;
-      });
-      return {
-        css: heroCard ? `${css}\n${heroCard.css}` : css,
-        cards: [
-          heroCard && { html: heroCard.html },
-          ...slots.map((s, i) => {
-            const card = cards[i], ability = slice[s];
-            return card && ability
-              ? { html: card.outerHTML, title: card.querySelector('.ac-name')?.textContent ?? '', ability }
-              : null;
-          }),
-        ],
-      };
     });
 
     return { ...hero, kind: 'hero', revisions, release, slots: slots.length + 1, render };
