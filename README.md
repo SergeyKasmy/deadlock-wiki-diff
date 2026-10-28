@@ -3,6 +3,8 @@
 Compare two different patches of a Deadlock ritualist or item side by side using data from [deadlock.wiki](https://deadlock.wiki), with the changes highlighted.
 Makes it easier to see what exactly changed since the last time you played.
 
+**Use it here: https://sergeykasmy.github.io/deadlock-wiki-diff/**
+
 > [!WARNING]
 > THIS PROJECT IS VIBECODED.
 >
