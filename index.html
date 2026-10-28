@@ -269,6 +269,11 @@ async function renderItem(rev) {
   const { css, doc } = await parseWiki(`{{Infobox item/auto|${slice.Name}|default=1}}`, ITEMS_PAGE, JSON.stringify({ [HERO.key]: slice }));
   const card = doc.querySelector('.infobox_item');
   if (!card) throw new Error('item card missing');
+  // the wiki fills cost and tier from the current item data, whatever page is swapped in, so the old values are written in afterwards
+  for (const [label, v] of [['Cost', slice.Cost?.toLocaleString('en-US')], ['Tier', slice.Tier]]) {
+    const cell = [...card.querySelectorAll('.infobox-label')].find(l => l.textContent.trim() === label)?.nextElementSibling;
+    if (cell && v != null) (cell.querySelector('b') ?? cell).textContent = v;
+  }
   return { slice, css, hero: card.outerHTML, html: [] }; // the card takes the hero card's slot
 }
 
