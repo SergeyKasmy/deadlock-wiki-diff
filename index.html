@@ -164,11 +164,22 @@ async function renderCards(sandboxTitle, sandboxText, nums = Array.from({ length
   return { css, cards };
 }
 
+// HeroData only stores the dash speeds since v1.6.0 (2026-02-11); before that the hero card shows 0. The stored value is
+// always distance / duration rounded to 0.1 (true for every hero in the current data), so older revisions get it derived.
+function fillDashSpeeds(hd) {
+  const out = { ...hd };
+  for (const m of ['Ground', 'Air']) {
+    const dist = out[m + 'DashDistanceInMeters'], dur = out[m + 'DashDuration'];
+    if (out[m + 'DashSpeed'] == null && dist && dur) out[m + 'DashSpeed'] = Math.round(dist / dur * 10) / 10;
+  }
+  return out;
+}
+
 // The hero card; its stats come from Data:HeroData.json, swapped for the revision of the same patch.
 async function renderHero(info) {
   const hd = matchRev(heroRevs, info);
   const text = HERO.infobox;
-  const { css, doc } = await parseWiki(text, hd && HERODATA_PAGE, hd && JSON.stringify({ [HERO.key]: (await pageJson(null, hd.revid))[HERO.key] }));
+  const { css, doc } = await parseWiki(text, hd && HERODATA_PAGE, hd && JSON.stringify({ [HERO.key]: fillDashSpeeds((await pageJson(null, hd.revid))[HERO.key]) }));
   const card = doc.querySelector('.infobox-h');
   if (!card) throw new Error('hero card missing');
   return { css, html: card.outerHTML };
