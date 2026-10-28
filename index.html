@@ -15,6 +15,7 @@ header .bar { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; max-w
 header h1 { font-size: 1.1rem; margin: 0 auto 0 0; flex: 0 1 auto; min-width: 0; }
 /* the revision labels are long, so the selects shrink (ellipsis) and wrap instead of widening the page */
 label { display: flex; flex-direction: column; gap: 2px; font-size: .75rem; color: #aaa; flex: 1 1 240px; min-width: 0; }
+label.check { flex: 0 0 auto; cursor: pointer; font-size: .85rem; color: inherit; }
 label select { width: 100%; min-width: 0; text-overflow: ellipsis; }
 select, button.swap { background: #232323; color: inherit; border: 1px solid #3a3a3a; border-radius: 4px; padding: 6px 8px; font: inherit; }
 button.swap { cursor: pointer; }
@@ -22,8 +23,6 @@ button.swap { cursor: pointer; }
 #status.err { color: #ff8a8a; }
 main { max-width: 1100px; margin: 0 auto; padding: 8px 16px 40px; }
 .row h2 { font-size: 1rem; margin: 22px 0 6px; display: flex; gap: 10px; align-items: baseline; }
-.row h2 small { font-weight: 400; font-size: .8rem; }
-.cnt-del { color: #ff7b7b; } .cnt-add { color: #6fe39a; }
 .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .side { display: flex; justify-content: center; align-items: flex-start; min-width: 0; }
 /* the wiki's card CSS is scoped to .mw-parser-output; the colour/font pin keeps cards identical to the wiki */
@@ -58,6 +57,7 @@ main { max-width: 1100px; margin: 0 auto; padding: 8px 16px 40px; }
     <label>Old <select id="sel-0"></select></label>
     <button class="swap" id="swap" title="Swap sides">⇄</button>
     <label>New <select id="sel-1"></select></label>
+    <label class="check"><span>&nbsp;</span><span><input type="checkbox" id="hl"> Highlight differences</span></label>
   </div>
   <div id="status">Loading revision list…</div>
 </header>
@@ -340,16 +340,16 @@ function mark(node, cls, card) {
 }
 
 function recompute() {
+  const on = $('hl').checked;
   for (let i = 0; i <= NUM; i++) { // slot 0 is the hero card, 1..NUM the abilities
     const [L, R] = sides.map(s => s.cards[i]);
-    const counts = $('cnt-' + i);
-    if (!L || !R) { counts.textContent = L || R ? 'missing in one version' : ''; continue; }
-    clearMarks(L); clearMarks(R);
+    if (L) clearMarks(L);
+    if (R) clearMarks(R);
+    if (!on || !L || !R) continue;
     const ln = textNodes(L), rn = textNodes(R);
     const [ul, ur] = lcsUnmatched(ln.map(n => n.nodeValue.trim()), rn.map(n => n.nodeValue.trim()));
     ul.forEach(k => mark(ln[k], 'diff-del', L));
     ur.forEach(k => mark(rn[k], 'diff-add', R));
-    counts.innerHTML = ul.size + ur.size ? `<span class="cnt-del">−${ul.size}</span> <span class="cnt-add">+${ur.size}</span>` : 'no differences';
   }
 }
 
@@ -359,7 +359,7 @@ let allRevs = [], revs = [], heroes = []; // revs: the revisions from the select
 
 function buildRows() {
   $('main').innerHTML = Array.from({ length: NUM + 1 }, (_, i) => `
-  <section class="row"><h2><span id="name-${i}">${i ? 'Ability ' + i : 'Hero card'}</span><small id="cnt-${i}"></small></h2>
+  <section class="row"><h2><span id="name-${i}">${i ? 'Ability ' + i : 'Hero card'}</span></h2>
   <div class="pair"><div class="side mw-parser-output" id="side-0-${i}"></div><div class="side mw-parser-output" id="side-1-${i}"></div></div></section>`).join('');
 }
 
@@ -467,6 +467,7 @@ async function loadSide(s) {
     [langRevs, heroRevs] = await Promise.all([LANG_PAGE, HERODATA_PAGE].map(t => listRevisions(t).catch(() => [])));
     heroes = await listHeroes();
     [0, 1].forEach(s => $('sel-' + s).addEventListener('change', () => loadSide(s)));
+    $('hl').addEventListener('change', recompute);
     $('sel-hero').innerHTML = heroes.map(h => `<option value="${h.key}">${h.name}</option>`).join('');
     $('sel-hero').addEventListener('change', () => selectHero($('sel-hero').value));
     $('swap').addEventListener('click', () => {
