@@ -26,8 +26,7 @@ main { max-width: 1100px; margin: 0 auto; padding: 8px 16px 40px; }
 .side { display: flex; justify-content: center; align-items: flex-start; min-width: 0; }
 /* the wiki's card CSS is scoped to .mw-parser-output; the colour/font pin keeps cards identical to the wiki */
 .side.mw-parser-output { color: oklch(0.953948 0.0168318 58.6608); font-family: Inter, sans-serif; --link-color: #60f8b3; }
-.side a { color: var(--link-color); }
-.diff-del { background: rgba(255, 70, 70, .35); border-radius: 2px; }
+.side a { color: var(--link-color); }.diff-del { background: rgba(255, 70, 70, .35); border-radius: 2px; }
 .diff-add { background: rgba(60, 220, 110, .3); border-radius: 2px; }
 @media (max-width: 1080px) { .pair { grid-template-columns: 1fr; } }
 </style>
@@ -61,7 +60,10 @@ main { max-width: 1100px; margin: 0 auto; padding: 8px 16px 40px; }
 
 <script>
 const API = 'https://deadlock.wiki/api.php';
-const HERO = { name: 'Celeste', key: 'hero_unicorn', langPrefix: 'ability_unicorn_' };
+const HERO = { name: 'Celeste', key: 'hero_unicorn', langPrefix: 'ability_unicorn_',
+  // static arguments of {{Infobox hero}} from the Celeste page; only the stats come from versioned data
+  infobox: 'release_date = [[Update:February 9, 2026|February 9, 2026]]|codenames = Unicorn, Pepper|pronouns = She/Her' };
+const HERODATA_PAGE = 'Data:HeroData.json';
 const DATA_PAGE = 'Data:AbilityCards.json';
 const NUM = 4;
 
@@ -78,18 +80,24 @@ async function api(params, post) {
   return j;
 }
 
-// Every bot revision of the data page since release; re-queried on each page load so new patches appear on their own.
-async function listRevisions() {
+// Every Deadbot revision of a data page since release; re-queried on each page load so new patches appear on their own.
+async function listRevisions(title) {
   const out = [];
   let cont = {};
   do {
     const j = await api({ action: 'query', prop: 'revisions', rvprop: 'ids|timestamp|comment|user', rvlimit: 500,
-      rvdir: 'newer', rvstart: '2026-02-09T00:00:00Z', titles: DATA_PAGE, ...cont });
+      rvdir: 'newer', rvstart: '2026-02-09T00:00:00Z', titles: title, ...cont });
     out.push(...j.query.pages[0].revisions);
     cont = j.continue || null;
   } while (cont);
-  // non-bot edits (tests, reverts) are not game patches
-  return out.filter(r => r.user === 'Deadbot' && /^Deadbot v/.test(r.comment || ''));
+  return out.filter(r => r.user === 'Deadbot');
+}
+
+// Deadbot saves each data page in the same patch run with the same comment label, a few minutes apart.
+// Pages without a revision for a patch were unchanged, so the closest earlier revision applies.
+function matchRev(list, info) {
+  return list.find(r => r.comment === info.comment)
+    || list.filter(r => Date.parse(r.timestamp) <= Date.parse(info.timestamp) + 3600e3).at(-1);
 }
 
 const sliceCache = new Map(), renderCache = new Map();
@@ -117,31 +125,36 @@ function hoistHeaders(slice) {
 }
 
 const LANG_PAGE = 'Data:Lang en.json';
-let langRevs = []; // Deadbot saves the game's translations in the same patch run, with the same comment label
+let langRevs = [], heroRevs = [];
 
-async function listLangRevisions() {
-  const out = [];
-  let cont = {};
-  do {
-    const j = await api({ action: 'query', prop: 'revisions', rvprop: 'ids|timestamp|comment|user', rvlimit: 500,
-      rvdir: 'newer', rvstart: '2026-02-09T00:00:00Z', titles: LANG_PAGE, ...cont });
-    out.push(...j.query.pages[0].revisions);
-    cont = j.continue || null;
-  } while (cont);
-  return out.filter(r => r.user === 'Deadbot');
-}
 
 // TemplateSandbox can swap only one page per request, so the cards (old numbers) and the translations (old
 // description texts) are rendered separately and merged afterwards.
+async function parseWiki(text, sandboxTitle, sandboxText) {
+  const sandbox = sandboxTitle ? { templatesandboxtitle: sandboxTitle, templatesandboxtext: sandboxText,
+    templatesandboxcontentmodel: 'json', templatesandboxcontentformat: 'application/json' } : {};
+  const j = await api({ action: 'parse', prop: 'text', contentmodel: 'wikitext', title: HERO.name, text, ...sandbox }, true);
+  if (/Lua error/.test(j.parse.text)) throw new Error('render failed');
+  const doc = new DOMParser().parseFromString(j.parse.text, 'text/html');
+  return { css: [...doc.querySelectorAll('style')].map(s => s.textContent).join('\n'), doc };
+}
+
 async function renderCards(sandboxTitle, sandboxText) {
   const text = Array.from({ length: NUM }, (_, i) => `{{AbilitySection|hero_name=${HERO.name}|ability_num=${i + 1}}}`).join('');
-  const j = await api({ action: 'parse', prop: 'text', contentmodel: 'wikitext', title: HERO.name, text,
-    templatesandboxtitle: sandboxTitle, templatesandboxtext: sandboxText,
-    templatesandboxcontentmodel: 'json', templatesandboxcontentformat: 'application/json' }, true);
-  const doc = new DOMParser().parseFromString(j.parse.text, 'text/html');
+  const { css, doc } = await parseWiki(text, sandboxTitle, sandboxText);
   const cards = [...doc.querySelectorAll('.ability-card')];
-  if (cards.length !== NUM || /Lua error/.test(j.parse.text)) throw new Error('render failed');
-  return { css: [...doc.querySelectorAll('style')].map(s => s.textContent).join('\n'), cards };
+  if (cards.length !== NUM) throw new Error('render failed');
+  return { css, cards };
+}
+
+// The hero card; its stats come from Data:HeroData.json, swapped for the revision of the same patch.
+async function renderHero(info) {
+  const hd = matchRev(heroRevs, info);
+  const text = `{{Infobox hero|key=${HERO.key}|${HERO.infobox}}}`;
+  const { css, doc } = await parseWiki(text, hd && HERODATA_PAGE, hd && JSON.stringify({ [HERO.key]: await heroSlice(hd.revid) }));
+  const card = doc.querySelector('.infobox-h');
+  if (!card) throw new Error('hero card missing');
+  return { css, html: card.outerHTML };
 }
 
 const langRenderCache = new Map();
@@ -185,9 +198,7 @@ async function render(rev) {
       const slice = hoistHeaders(structuredClone(await heroSlice(rev)));
       const { css, cards } = await renderCards(DATA_PAGE, JSON.stringify({ [HERO.key]: slice }));
       const info = revs.find(r => r.revid === rev);
-      const lang = info && (langRevs.find(r => r.comment === info.comment)
-        // no revision with the same patch label: closest earlier one
-        || langRevs.filter(r => r.timestamp <= info.timestamp).at(-1));
+      const lang = info && matchRev(langRevs, info);
       // the newest translations are what the renderer already used
       if (lang && lang.revid !== langRevs.at(-1).revid) {
         try {
@@ -195,7 +206,9 @@ async function render(rev) {
           cards.forEach((c, i) => spliceDescriptions(c, langCards[i], slice[i + 1], cur[i + 1]));
         } catch (e) { console.warn('old translations unavailable, showing current texts', e); }
       }
-      return { slice, css, html: cards.map(c => c.outerHTML) };
+      let hero = null;
+      try { hero = await renderHero(info); } catch (e) { console.warn('hero card unavailable', e); }
+      return { slice, css: css + (hero ? '\n' + hero.css : ''), hero: hero?.html, html: cards.map(c => c.outerHTML) };
     })();
     renderCache.set(rev, p);
     p.catch(() => renderCache.delete(rev));
@@ -310,7 +323,7 @@ function mark(node, cls, card) {
 }
 
 function recompute() {
-  for (let i = 0; i < NUM; i++) {
+  for (let i = 0; i <= NUM; i++) { // slot 0 is the hero card, 1..NUM the abilities
     const [L, R] = sides.map(s => s.cards[i]);
     const counts = $('cnt-' + i);
     if (!L || !R) { counts.textContent = ''; continue; }
@@ -327,8 +340,8 @@ function recompute() {
 const sides = [{ cards: [], token: 0 }, { cards: [], token: 0 }];
 let revs = [];
 
-$('main').innerHTML = Array.from({ length: NUM }, (_, i) => `
-  <section class="row"><h2><span id="name-${i}">Ability ${i + 1}</span><small id="cnt-${i}"></small></h2>
+$('main').innerHTML = Array.from({ length: NUM + 1 }, (_, i) => `
+  <section class="row"><h2><span id="name-${i}">${i ? 'Ability ' + i : 'Hero card'}</span><small id="cnt-${i}"></small></h2>
   <div class="pair"><div class="side mw-parser-output" id="side-0-${i}"></div><div class="side mw-parser-output" id="side-1-${i}"></div></div></section>`).join('');
 
 async function loadSide(s) {
@@ -338,16 +351,17 @@ async function loadSide(s) {
     const r = await render(rev);
     if (token !== side.token) return; // a newer selection superseded this one
     $('wiki-css').textContent = r.css; // TemplateStyles are identical across versions
-    side.cards = r.html.map((html, i) => {
+    side.cards = [r.hero, ...r.html].map((html, i) => {
       const host = $(`side-${s}-${i}`);
-      host.innerHTML = html;
+      host.innerHTML = html ?? '';
       const card = host.firstElementChild;
+      if (!card) return null;
       host.querySelectorAll('a[href^="/"]').forEach(a => a.setAttribute('href', 'https://deadlock.wiki' + a.getAttribute('href')));
-      const ability = [1, 2, 3, 4].map(n => r.slice[n]).find(a => a && a.Key === card.id.split(':')[1]);
+      const ability = i && [1, 2, 3, 4].map(n => r.slice[n]).find(a => a && a.Key === card.id.split(':')[1]);
       if (ability) attachGadget(card, ability, recompute);
       return card;
     });
-    if (s === 1) sides[1].cards.forEach((c, i) => { $('name-' + i).textContent = c.querySelector('.ac-name')?.textContent ?? ''; });
+    if (s === 1) sides[1].cards.forEach((c, i) => { if (i) $('name-' + i).textContent = c?.querySelector('.ac-name')?.textContent ?? ''; });
     setStatus('');
     recompute();
   } catch (e) {
@@ -357,8 +371,9 @@ async function loadSide(s) {
 
 (async () => {
   try {
-    revs = await listRevisions();
-    langRevs = await listLangRevisions().catch(() => []); // optional: without it old cards keep current texts
+    revs = (await listRevisions(DATA_PAGE)).filter(r => /^Deadbot v/.test(r.comment || '')); // other edits are not game patches
+    // optional: without them old cards keep current texts / stats
+    [langRevs, heroRevs] = await Promise.all([LANG_PAGE, HERODATA_PAGE].map(t => listRevisions(t).catch(() => [])));
     const opts = revs.map(r => `<option value="${r.revid}">${r.timestamp.slice(0, 10)} · ${r.comment.replace('Deadbot ', '')} · r${r.revid}</option>`).join('');
     [0, 1].forEach(s => { $('sel-' + s).innerHTML = opts; $('sel-' + s).addEventListener('change', () => loadSide(s)); });
     $('sel-0').selectedIndex = 0;
