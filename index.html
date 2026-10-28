@@ -61,7 +61,7 @@ main { max-width: 1100px; margin: 0 auto; padding: 8px 16px 40px; }
 
 <script>
 const API = 'https://deadlock.wiki/api.php';
-const HERO = { name: 'Celeste', key: 'hero_unicorn' };
+const HERO = { name: 'Celeste', key: 'hero_unicorn', langPrefix: 'ability_unicorn_' };
 const DATA_PAGE = 'Data:AbilityCards.json';
 const NUM = 4;
 
@@ -116,20 +116,86 @@ function hoistHeaders(slice) {
   return slice;
 }
 
+const LANG_PAGE = 'Data:Lang en.json';
+let langRevs = []; // Deadbot saves the game's translations in the same patch run, with the same comment label
+
+async function listLangRevisions() {
+  const out = [];
+  let cont = {};
+  do {
+    const j = await api({ action: 'query', prop: 'revisions', rvprop: 'ids|timestamp|comment|user', rvlimit: 500,
+      rvdir: 'newer', rvstart: '2026-02-09T00:00:00Z', titles: LANG_PAGE, ...cont });
+    out.push(...j.query.pages[0].revisions);
+    cont = j.continue || null;
+  } while (cont);
+  return out.filter(r => r.user === 'Deadbot');
+}
+
+// TemplateSandbox can swap only one page per request, so the cards (old numbers) and the translations (old
+// description texts) are rendered separately and merged afterwards.
+async function renderCards(sandboxTitle, sandboxText) {
+  const text = Array.from({ length: NUM }, (_, i) => `{{AbilitySection|hero_name=${HERO.name}|ability_num=${i + 1}}}`).join('');
+  const j = await api({ action: 'parse', prop: 'text', contentmodel: 'wikitext', title: HERO.name, text,
+    templatesandboxtitle: sandboxTitle, templatesandboxtext: sandboxText,
+    templatesandboxcontentmodel: 'json', templatesandboxcontentformat: 'application/json' }, true);
+  const doc = new DOMParser().parseFromString(j.parse.text, 'text/html');
+  const cards = [...doc.querySelectorAll('.ability-card')];
+  if (cards.length !== NUM || /Lua error/.test(j.parse.text)) throw new Error('render failed');
+  return { css: [...doc.querySelectorAll('style')].map(s => s.textContent).join('\n'), cards };
+}
+
+const langRenderCache = new Map();
+// Cards rendered with the old translations but the current data: only their description elements are used.
+function renderWithLang(langRev) {
+  if (!langRenderCache.has(langRev)) {
+    const p = (async () => {
+      const j = await api({ action: 'query', prop: 'revisions', rvslots: 'main', rvprop: 'content', revids: langRev });
+      const lang = JSON.parse(j.query.pages[0].revisions[0].slots.main.content);
+      const keep = Object.fromEntries(Object.entries(lang).filter(([k]) => k.startsWith(HERO.langPrefix)));
+      return (await renderCards(LANG_PAGE, JSON.stringify(keep))).cards;
+    })();
+    langRenderCache.set(langRev, p);
+    p.catch(() => langRenderCache.delete(langRev));
+  }
+  return langRenderCache.get(langRev);
+}
+
+// Copies description texts from the old-translation render into the old-data render, where both versions use the same DescKey.
+function spliceDescriptions(card, langCard, oldAb, curAb) {
+  if (!oldAb || !curAb || oldAb.Key !== curAb.Key) return;
+  for (const k of [1, 2, 3]) {
+    const dk = oldAb['Info' + k]?.DescKey;
+    const j = dk && [1, 2, 3].find(j => curAb['Info' + j]?.DescKey === dk);
+    const dst = card.querySelector(`#ability-info${k} .ac-info-desc`), src = j && langCard.querySelector(`#ability-info${j} .ac-info-desc`);
+    if (dst && src) dst.innerHTML = src.innerHTML;
+  }
+  [1, 2, 5].forEach((cost, i) => {
+    const dk = oldAb.Upgrades[i]?.DescKey;
+    if (!dk || curAb.Upgrades[i]?.DescKey !== dk) return;
+    const dst = card.querySelector(`#ability-upgrade-${cost} .ac-upgrade-desc`), src = langCard.querySelector(`#ability-upgrade-${cost} .ac-upgrade-desc`);
+    if (dst && src) dst.replaceWith(src.cloneNode(true)); // the font size depends on the text length, so the element is copied whole
+  });
+}
+
 // The wiki's own renderer with the old data page swapped in via TemplateSandbox.
 // Only the hero's slice is sent (renders identically to the full file, but ~100x smaller).
 async function render(rev) {
   if (!renderCache.has(rev)) {
     const p = (async () => {
       const slice = hoistHeaders(structuredClone(await heroSlice(rev)));
-      const text = Array.from({ length: NUM }, (_, i) => `{{AbilitySection|hero_name=${HERO.name}|ability_num=${i + 1}}}`).join('');
-      const j = await api({ action: 'parse', prop: 'text', contentmodel: 'wikitext', title: HERO.name, text,
-        templatesandboxtitle: DATA_PAGE, templatesandboxtext: JSON.stringify({ [HERO.key]: slice }),
-        templatesandboxcontentmodel: 'json', templatesandboxcontentformat: 'application/json' }, true);
-      const doc = new DOMParser().parseFromString(j.parse.text, 'text/html');
-      const cards = [...doc.querySelectorAll('.ability-card')];
-      if (cards.length !== NUM || /Lua error/.test(j.parse.text)) throw new Error(`render failed for r${rev}`);
-      return { slice, css: [...doc.querySelectorAll('style')].map(s => s.textContent).join('\n'), html: cards.map(c => c.outerHTML) };
+      const { css, cards } = await renderCards(DATA_PAGE, JSON.stringify({ [HERO.key]: slice }));
+      const info = revs.find(r => r.revid === rev);
+      const lang = info && (langRevs.find(r => r.comment === info.comment)
+        // no revision with the same patch label: closest earlier one
+        || langRevs.filter(r => r.timestamp <= info.timestamp).at(-1));
+      // the newest translations are what the renderer already used
+      if (lang && lang.revid !== langRevs.at(-1).revid) {
+        try {
+          const [langCards, cur] = await Promise.all([renderWithLang(lang.revid), heroSlice(revs.at(-1).revid)]);
+          cards.forEach((c, i) => spliceDescriptions(c, langCards[i], slice[i + 1], cur[i + 1]));
+        } catch (e) { console.warn('old translations unavailable, showing current texts', e); }
+      }
+      return { slice, css, html: cards.map(c => c.outerHTML) };
     })();
     renderCache.set(rev, p);
     p.catch(() => renderCache.delete(rev));
@@ -292,6 +358,7 @@ async function loadSide(s) {
 (async () => {
   try {
     revs = await listRevisions();
+    langRevs = await listLangRevisions().catch(() => []); // optional: without it old cards keep current texts
     const opts = revs.map(r => `<option value="${r.revid}">${r.timestamp.slice(0, 10)} · ${r.comment.replace('Deadbot ', '')} · r${r.revid}</option>`).join('');
     [0, 1].forEach(s => { $('sel-' + s).innerHTML = opts; $('sel-' + s).addEventListener('change', () => loadSide(s)); });
     $('sel-0').selectedIndex = 0;
