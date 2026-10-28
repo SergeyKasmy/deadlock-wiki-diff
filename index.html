@@ -362,7 +362,10 @@ function buildRows() {
 }
 
 function fillRevisionSelects() {
-  const opts = revs.map(r => `<option value="${r.revid}">${r.timestamp.slice(0, 10)} · ${r.comment.replace(/^deadbot /i, '')} · r${r.revid}</option>`).join('');
+  // the infobox holds e.g. `release_date = [[Update:February 9, 2026|February 9, 2026]]`; the first revision on or after that day is tagged
+  const released = Date.parse((HERO.infobox.match(/release_date\s*=\s*(?:\[\[[^|\]]*\|)?([^\]\n|]+)/)?.[1] ?? '') + ' UTC');
+  const releaseRev = revs.find(r => Date.parse(r.timestamp) >= released); // NaN (no date) matches nothing
+  const opts = revs.map(r => `<option value="${r.revid}">${r.timestamp.slice(0, 10)} · ${r.comment.replace(/^deadbot /i, '')} · r${r.revid}${r === releaseRev ? ' · ★ release' : ''}</option>`).join('');
   [0, 1].forEach(s => { $('sel-' + s).innerHTML = opts; });
 }
 
