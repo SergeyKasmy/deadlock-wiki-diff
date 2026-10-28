@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- cdn.deadlock.wiki rejects hotlinks that carry a foreign Referer -->
+<meta name="referrer" content="no-referrer">
+<title>Celeste ability comparison</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap">
+<style>
+:root { color-scheme: dark; }
+body { margin: 0; background: #141414; color: oklch(0.953948 0.0168318 58.6608); font: 15px/1.4 Inter, system-ui, sans-serif; }
+header { position: sticky; top: 0; z-index: 10; background: #141414ee; backdrop-filter: blur(6px); border-bottom: 1px solid #2a2a2a; padding: 10px 16px; }
+header .bar { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; max-width: 1100px; margin: 0 auto; }
+header h1 { font-size: 1.1rem; margin: 0 auto 0 0; }
+label { display: flex; flex-direction: column; gap: 2px; font-size: .75rem; color: #aaa; }
+select, button.swap { background: #232323; color: inherit; border: 1px solid #3a3a3a; border-radius: 4px; padding: 6px 8px; font: inherit; }
+button.swap { cursor: pointer; }
+#status { max-width: 1100px; margin: 4px auto 0; font-size: .8rem; color: #aaa; min-height: 1.2em; }
+#status.err { color: #ff8a8a; }
+main { max-width: 1100px; margin: 0 auto; padding: 8px 16px 40px; }
+.row h2 { font-size: 1rem; margin: 22px 0 6px; display: flex; gap: 10px; align-items: baseline; }
+.row h2 small { font-weight: 400; font-size: .8rem; }
+.cnt-del { color: #ff7b7b; } .cnt-add { color: #6fe39a; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.side { display: flex; justify-content: center; align-items: flex-start; min-width: 0; }
+/* the wiki's card CSS is scoped to .mw-parser-output; the colour/font pin keeps cards identical to the wiki */
+.side.mw-parser-output { color: oklch(0.953948 0.0168318 58.6608); font-family: Inter, sans-serif; --link-color: #60f8b3; }
+.side a { color: var(--link-color); }
+.diff-del { background: rgba(255, 70, 70, .35); border-radius: 2px; }
+.diff-add { background: rgba(60, 220, 110, .3); border-radius: 2px; }
+@media (max-width: 1080px) { .pair { grid-template-columns: 1fr; } }
+</style>
+<style id="gadget-css">
+/* Codex base button rule (the wiki's skin supplies it; divs here never match the :enabled variants) */
+.cdx-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;box-sizing:border-box;min-height:32px;max-width:28rem;margin:0;border-width:1px;border-style:solid;border-radius:2px;padding-right:11px;padding-left:11px;font-family:inherit;font-size:var(--font-size-medium,1rem);font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-transform:none;transition-property:background-color,color,border-color,box-shadow;transition-duration:.1s}
+/* from MediaWiki:Gadget-ability-upgrades.css, with .hide scoped so it cannot leak into the page chrome */
+.ability-card .hide { display: none !important; }
+.ability-attr { transition: text-shadow 0.6s ease; }
+.ability-attr.highlight { text-shadow: 0 0 6px rgba(255,250,0,.6), 0 0 12px rgba(255,250,0,.5), 0 0 24px rgba(255,250,0,.4); }
+.ability-upgrade { transition: all 0.2s ease; cursor: pointer; }
+.ability-upgrade.hovered { background-color: #3d2d52a3 !important; transform: scale(1.05); box-shadow: 0 4px 12px rgba(0,0,0,.2) !important; }
+.ability-upgrade.selected { background-color: #503667 !important; }
+.ability-upgrade.selected.hovered { background-color: #3d2d52a3 !important; }
+.ability-upgrade-header { transition: background-color 0.2s ease; }
+.ability-upgrade.selected .ability-upgrade-header { background-color: #11140E !important; transition: background-color 0.2s ease; }
+</style>
+<style id="wiki-css"></style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <h1>Celeste &mdash; ability cards, old vs new</h1>
+    <label>Old <select id="sel-0"></select></label>
+    <button class="swap" id="swap" title="Swap sides">⇄</button>
+    <label>New <select id="sel-1"></select></label>
+  </div>
+  <div id="status">Loading revision list…</div>
+</header>
+<main id="main"></main>
+
+<script>
+const API = 'https://deadlock.wiki/api.php';
+const HERO = { name: 'Celeste', key: 'hero_unicorn' };
+const DATA_PAGE = 'Data:AbilityCards.json';
+const NUM = 4;
+
+const $ = id => document.getElementById(id);
+const statusEl = $('status');
+const setStatus = (t, err) => { statusEl.textContent = t; statusEl.className = err ? 'err' : ''; };
+
+async function api(params, post) {
+  const p = new URLSearchParams({ format: 'json', formatversion: 2, origin: '*', ...params });
+  const r = await (post ? fetch(API, { method: 'POST', body: p }) : fetch(`${API}?${p}`));
+  if (!r.ok) throw new Error(`wiki API ${r.status}`);
+  const j = await r.json();
+  if (j.error) throw new Error(j.error.info);
+  return j;
+}
+
+// Every bot revision of the data page since release; re-queried on each page load so new patches appear on their own.
+async function listRevisions() {
+  const out = [];
+  let cont = {};
+  do {
+    const j = await api({ action: 'query', prop: 'revisions', rvprop: 'ids|timestamp|comment|user', rvlimit: 500,
+      rvdir: 'newer', rvstart: '2026-02-09T00:00:00Z', titles: DATA_PAGE, ...cont });
+    out.push(...j.query.pages[0].revisions);
+    cont = j.continue || null;
+  } while (cont);
+  // non-bot edits (tests, reverts) are not game patches
+  return out.filter(r => r.user === 'Deadbot' && /^Deadbot v/.test(r.comment || ''));
+}
+
+const sliceCache = new Map(), renderCache = new Map();
+
+async function heroSlice(rev) {
+  if (!sliceCache.has(rev)) {
+    sliceCache.set(rev, api({ action: 'query', prop: 'revisions', rvslots: 'main', rvprop: 'content', revids: rev })
+      .then(j => JSON.parse(j.query.pages[0].revisions[0].slots.main.content)[HERO.key]));
+    sliceCache.get(rev).catch(() => sliceCache.delete(rev));
+  }
+  return sliceCache.get(rev);
+}
+
+// Early revisions keep Ability* stats (cooldown, cast range, duration…) at the ability's top level; the current
+// card module only reads them from `Headers`, so without this the old cards lose their header boxes.
+function hoistHeaders(slice) {
+  for (let n = 1; n <= NUM; n++) {
+    const a = slice[n];
+    if (!a || a.Headers) continue;
+    a.Headers = {};
+    for (const [k, v] of Object.entries(a))
+      if (/^Ability/.test(k) && v && typeof v === 'object') { a.Headers[k] = v; delete a[k]; }
+  }
+  return slice;
+}
+
+// The wiki's own renderer with the old data page swapped in via TemplateSandbox.
+// Only the hero's slice is sent (renders identically to the full file, but ~100x smaller).
+async function render(rev) {
+  if (!renderCache.has(rev)) {
+    const p = (async () => {
+      const slice = hoistHeaders(structuredClone(await heroSlice(rev)));
+      const text = Array.from({ length: NUM }, (_, i) => `{{AbilitySection|hero_name=${HERO.name}|ability_num=${i + 1}}}`).join('');
+      const j = await api({ action: 'parse', prop: 'text', contentmodel: 'wikitext', title: HERO.name, text,
+        templatesandboxtitle: DATA_PAGE, templatesandboxtext: JSON.stringify({ [HERO.key]: slice }),
+        templatesandboxcontentmodel: 'json', templatesandboxcontentformat: 'application/json' }, true);
+      const doc = new DOMParser().parseFromString(j.parse.text, 'text/html');
+      const cards = [...doc.querySelectorAll('.ability-card')];
+      if (cards.length !== NUM || /Lua error/.test(j.parse.text)) throw new Error(`render failed for r${rev}`);
+      return { slice, css: [...doc.querySelectorAll('style')].map(s => s.textContent).join('\n'), html: cards.map(c => c.outerHTML) };
+    })();
+    renderCache.set(rev, p);
+    p.catch(() => renderCache.delete(rev));
+  }
+  return renderCache.get(rev);
+}
+
+/* ---- upgrade gadget: port of MediaWiki:Gadget-ability-upgrades.js, scoped to one card so the two sides don't share state ---- */
+const COST_TO_INDEX = { 1: 0, 2: 1, 5: 2 };
+const INDEX_TO_COST = { 0: 1, 1: 2, 2: 5 };
+const sig = (n, s) => Math.abs(n) >= 1 ? Number(n.toFixed(3)) : Number(n.toPrecision(s));
+
+function attachGadget(card, ability, onChange) {
+  const st = [false, false, false], cache = new Map();
+  const btns = [...card.querySelectorAll('.ability-upgrade')];
+
+  const hover = el => {
+    const idx = +el.dataset.index, on = el.classList.contains('selected');
+    btns.forEach(b => { if ((b.classList.contains('selected') === on) && (on ? +b.dataset.index >= idx : +b.dataset.index <= idx)) b.classList.add('hovered'); });
+  };
+  const unhover = () => btns.forEach(b => b.classList.remove('hovered'));
+
+  function updateElem(key, elem, value, revert, multiply) {
+    if (revert) { if (cache.has(key)) elem.innerHTML = cache.get(key); }
+    else {
+      if (!cache.has(key)) cache.set(key, elem.innerHTML);
+      const cur = parseFloat(elem.innerHTML);
+      elem.innerHTML = multiply ? sig(cur * value, 3) : sig(cur + sig(parseFloat(String(value).replace(/[sm]/g, ''))), 3);
+      const a = elem.closest('.ability-attr');
+      if (a) { a.classList.add('highlight'); setTimeout(() => a.classList.remove('highlight'), 450); }
+    }
+    const box = elem.closest('.ability-headerattr, .ability-mainbox, .ability-altbox');
+    if (box) box.classList.toggle('hide', elem.innerHTML.trim() === '0');
+  }
+
+  function toggle(i, enable) {
+    const up = ability.Upgrades[i];
+    for (const n of [1, 2, 3]) {
+      const info = ability['Info' + n];
+      if (info && info.RequiresUpgradeIndex === i) {
+        card.querySelector('#ability-info' + n)?.classList.toggle('hide', !enable);
+        break;
+      }
+    }
+    for (const [key, v] of Object.entries(up)) {
+      let value = v, multiply = false;
+      if (v && typeof v === 'object') {
+        let scale = v.Scale;
+        if (Array.isArray(scale)) scale = scale.find(s => s.Type === 'spirit'); // several scales: only spirit is shown
+        const se = card.querySelector('#' + CSS.escape(key + '-scale'));
+        // shortcut: melee / weapon_power scaling needs Data:HeroData (never used by Celeste), port it when adding other heroes
+        if (se && scale) updateElem(`${i}-${key}-scale`, se, scale.Type === 'weapon_power' ? scale.Value / 100 : scale.Value, !enable, scale.Multiply);
+        multiply = v.Multiply;
+        value = v.Value;
+      }
+      card.querySelectorAll('#' + CSS.escape(key)).forEach((el, n) =>
+        updateElem(`${i}-${key}-${n}`, el.querySelector('b') || el, value, !enable, multiply));
+    }
+    st[i] = enable;
+    card.querySelector('#ability-upgrade-' + INDEX_TO_COST[i])?.classList.toggle('selected', enable);
+  }
+
+  function apply(btn) {
+    const i = COST_TO_INDEX[btn.id.replace('ability-upgrade-', '')];
+    if (i === undefined) return;
+    if (st[i]) { for (let j = 2; j >= i; j--) if (st[j]) toggle(j, false); }
+    else for (let j = 0; j <= i; j++) if (!st[j]) toggle(j, true);
+    unhover(); hover(btn); onChange();
+  }
+
+  btns.forEach(b => { b.addEventListener('mouseenter', () => hover(b)); b.addEventListener('mouseleave', unhover); });
+  card.addEventListener('click', e => { const b = e.target.closest('.ability-upgrade'); if (b) apply(b); });
+  card.addEventListener('keydown', e => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('ability-upgrade')) { e.preventDefault(); e.target.click(); }
+  });
+}
+
+/* ---- diff highlighting on rendered text ---- */
+function textNodes(root) {
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT), out = [];
+  for (let n; (n = w.nextNode());) if (n.nodeValue.trim()) out.push(n);
+  return out;
+}
+
+function lcsUnmatched(a, b) {
+  const dp = Array.from({ length: a.length + 1 }, () => new Uint16Array(b.length + 1));
+  for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--)
+    dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const ua = new Set(a.keys()), ub = new Set(b.keys());
+  for (let i = 0, j = 0; i < a.length && j < b.length;) {
+    if (a[i] === b[j]) { ua.delete(i); ub.delete(j); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) i++; else j++;
+  }
+  return [ua, ub];
+}
+
+function clearMarks(card) {
+  card.querySelectorAll('.diff-wrap').forEach(s => s.replaceWith(document.createTextNode(s.textContent)));
+  card.querySelectorAll('.diff-del,.diff-add').forEach(e => e.classList.remove('diff-del', 'diff-add'));
+  card.normalize();
+}
+
+function mark(node, cls, card) {
+  // gadget-managed value elements get the class itself: the gadget parseFloat()s their innerHTML, so nothing may be wrapped inside
+  const holder = node.parentElement.closest('.ability-attr');
+  if (holder && card.contains(holder)) holder.classList.add(cls);
+  else {
+    const s = document.createElement('span');
+    s.className = `diff-wrap ${cls}`;
+    node.replaceWith(s); s.append(node);
+  }
+}
+
+function recompute() {
+  for (let i = 0; i < NUM; i++) {
+    const [L, R] = sides.map(s => s.cards[i]);
+    const counts = $('cnt-' + i);
+    if (!L || !R) { counts.textContent = ''; continue; }
+    clearMarks(L); clearMarks(R);
+    const ln = textNodes(L), rn = textNodes(R);
+    const [ul, ur] = lcsUnmatched(ln.map(n => n.nodeValue.trim()), rn.map(n => n.nodeValue.trim()));
+    ul.forEach(k => mark(ln[k], 'diff-del', L));
+    ur.forEach(k => mark(rn[k], 'diff-add', R));
+    counts.innerHTML = ul.size + ur.size ? `<span class="cnt-del">−${ul.size}</span> <span class="cnt-add">+${ur.size}</span>` : 'no differences';
+  }
+}
+
+/* ---- page ---- */
+const sides = [{ cards: [], token: 0 }, { cards: [], token: 0 }];
+let revs = [];
+
+$('main').innerHTML = Array.from({ length: NUM }, (_, i) => `
+  <section class="row"><h2><span id="name-${i}">Ability ${i + 1}</span><small id="cnt-${i}"></small></h2>
+  <div class="pair"><div class="side mw-parser-output" id="side-0-${i}"></div><div class="side mw-parser-output" id="side-1-${i}"></div></div></section>`).join('');
+
+async function loadSide(s) {
+  const side = sides[s], token = ++side.token, rev = +$('sel-' + s).value;
+  setStatus(`Loading r${rev}…`);
+  try {
+    const r = await render(rev);
+    if (token !== side.token) return; // a newer selection superseded this one
+    $('wiki-css').textContent = r.css; // TemplateStyles are identical across versions
+    side.cards = r.html.map((html, i) => {
+      const host = $(`side-${s}-${i}`);
+      host.innerHTML = html;
+      const card = host.firstElementChild;
+      host.querySelectorAll('a[href^="/"]').forEach(a => a.setAttribute('href', 'https://deadlock.wiki' + a.getAttribute('href')));
+      const ability = [1, 2, 3, 4].map(n => r.slice[n]).find(a => a && a.Key === card.id.split(':')[1]);
+      if (ability) attachGadget(card, ability, recompute);
+      return card;
+    });
+    if (s === 1) sides[1].cards.forEach((c, i) => { $('name-' + i).textContent = c.querySelector('.ac-name')?.textContent ?? ''; });
+    setStatus('');
+    recompute();
+  } catch (e) {
+    if (token === side.token) setStatus(`Failed to load r${rev}: ${e.message}`, true);
+  }
+}
+
+(async () => {
+  try {
+    revs = await listRevisions();
+    const opts = revs.map(r => `<option value="${r.revid}">${r.timestamp.slice(0, 10)} · ${r.comment.replace('Deadbot ', '')} · r${r.revid}</option>`).join('');
+    [0, 1].forEach(s => { $('sel-' + s).innerHTML = opts; $('sel-' + s).addEventListener('change', () => loadSide(s)); });
+    $('sel-0').selectedIndex = 0;
+    $('sel-1').selectedIndex = revs.length - 1;
+    $('swap').addEventListener('click', () => {
+      const a = $('sel-0').value; $('sel-0').value = $('sel-1').value; $('sel-1').value = a;
+      loadSide(0); loadSide(1);
+    });
+    loadSide(0); loadSide(1);
+  } catch (e) { setStatus('Failed to load revision list: ' + e.message, true); }
+})();
+</script>
+</body>
+</html>
