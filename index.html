@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <!-- cdn.deadlock.wiki rejects hotlinks that carry a foreign Referer -->
 <meta name="referrer" content="no-referrer">
-<title>Celeste ability comparison</title>
+<title>Deadlock ability comparison</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap">
 <style>
 :root { color-scheme: dark; }
@@ -49,7 +49,7 @@ main { max-width: 1100px; margin: 0 auto; padding: 8px 16px 40px; }
 <body>
 <header>
   <div class="bar">
-    <h1>Celeste &mdash; ability cards, old vs new</h1>
+    <h1><select id="sel-hero" title="Hero"></select> &mdash; ability cards, old vs new</h1>
     <label>Old <select id="sel-0"></select></label>
     <button class="swap" id="swap" title="Swap sides">⇄</button>
     <label>New <select id="sel-1"></select></label>
@@ -60,12 +60,10 @@ main { max-width: 1100px; margin: 0 auto; padding: 8px 16px 40px; }
 
 <script>
 const API = 'https://deadlock.wiki/api.php';
-const HERO = { name: 'Celeste', key: 'hero_unicorn', langPrefix: 'ability_unicorn_',
-  // static arguments of {{Infobox hero}} from the Celeste page; only the stats come from versioned data
-  infobox: 'release_date = [[Update:February 9, 2026|February 9, 2026]]|codenames = Unicorn, Pepper|pronouns = She/Her' };
+// Set by selectHero(); everything hero-specific (key, page title, infobox wikitext, ability count, Lang key prefix) is read from the wiki at runtime.
+let HERO = null, NUM = 4;
 const HERODATA_PAGE = 'Data:HeroData.json';
 const DATA_PAGE = 'Data:AbilityCards.json';
-const NUM = 4;
 
 const $ = id => document.getElementById(id);
 const statusEl = $('status');
@@ -100,15 +98,26 @@ function matchRev(list, info) {
     || list.filter(r => Date.parse(r.timestamp) <= Date.parse(info.timestamp) + 3600e3).at(-1);
 }
 
-const sliceCache = new Map(), renderCache = new Map();
+const contentCache = new Map();
+let renderCache = new Map(), langRenderCache = new Map(); // reset per hero
+
+// Whole data page at one revision (or the current one when rev is omitted); shared by all heroes.
+function pageJson(title, rev) {
+  const k = rev ?? title;
+  if (!contentCache.has(k)) {
+    const p = api({ action: 'query', prop: 'revisions', rvslots: 'main', rvprop: 'content', ...(rev ? { revids: rev } : { titles: title }) })
+      .then(j => JSON.parse(j.query.pages[0].revisions[0].slots.main.content));
+    contentCache.set(k, p);
+    p.catch(() => contentCache.delete(k));
+  }
+  return contentCache.get(k);
+}
 
 async function heroSlice(rev) {
-  if (!sliceCache.has(rev)) {
-    sliceCache.set(rev, api({ action: 'query', prop: 'revisions', rvslots: 'main', rvprop: 'content', revids: rev })
-      .then(j => JSON.parse(j.query.pages[0].revisions[0].slots.main.content)[HERO.key]));
-    sliceCache.get(rev).catch(() => sliceCache.delete(rev));
-  }
-  return sliceCache.get(rev);
+  const slice = (await pageJson(null, rev))[HERO.key];
+  // unreleased heroes sit in the file as a bare { Name } stub
+  if (!slice?.[1]) throw new Error(`${HERO.name} has no abilities in r${rev} yet, pick a later revision`);
+  return slice;
 }
 
 // Early revisions keep Ability* stats (cooldown, cast range, duration…) at the ability's top level; the current
@@ -126,7 +135,6 @@ function hoistHeaders(slice) {
 
 const LANG_PAGE = 'Data:Lang en.json';
 let langRevs = [], heroRevs = [];
-
 
 // TemplateSandbox can swap only one page per request, so the cards (old numbers) and the translations (old
 // description texts) are rendered separately and merged afterwards.
@@ -150,21 +158,20 @@ async function renderCards(sandboxTitle, sandboxText) {
 // The hero card; its stats come from Data:HeroData.json, swapped for the revision of the same patch.
 async function renderHero(info) {
   const hd = matchRev(heroRevs, info);
-  const text = `{{Infobox hero|key=${HERO.key}|${HERO.infobox}}}`;
-  const { css, doc } = await parseWiki(text, hd && HERODATA_PAGE, hd && JSON.stringify({ [HERO.key]: await heroSlice(hd.revid) }));
+  const text = HERO.infobox;
+  const { css, doc } = await parseWiki(text, hd && HERODATA_PAGE, hd && JSON.stringify({ [HERO.key]: (await pageJson(null, hd.revid))[HERO.key] }));
   const card = doc.querySelector('.infobox-h');
   if (!card) throw new Error('hero card missing');
   return { css, html: card.outerHTML };
 }
 
-const langRenderCache = new Map();
 // Cards rendered with the old translations but the current data: only their description elements are used.
 function renderWithLang(langRev) {
   if (!langRenderCache.has(langRev)) {
     const p = (async () => {
-      const j = await api({ action: 'query', prop: 'revisions', rvslots: 'main', rvprop: 'content', revids: langRev });
-      const lang = JSON.parse(j.query.pages[0].revisions[0].slots.main.content);
-      const keep = Object.fromEntries(Object.entries(lang).filter(([k]) => k.startsWith(HERO.langPrefix)));
+      const lang = await pageJson(null, langRev);
+      // only this hero's strings: the full file is ~1 MB
+      const keep = Object.fromEntries(Object.entries(lang).filter(([k]) => k.startsWith(HERO.langPrefix) || HERO.descKeys.has(k)));
       return (await renderCards(LANG_PAGE, JSON.stringify(keep))).cards;
     })();
     langRenderCache.set(langRev, p);
@@ -338,11 +345,74 @@ function recompute() {
 
 /* ---- page ---- */
 const sides = [{ cards: [], token: 0 }, { cards: [], token: 0 }];
-let revs = [];
+let revs = [], heroes = [];
 
-$('main').innerHTML = Array.from({ length: NUM + 1 }, (_, i) => `
+function buildRows() {
+  $('main').innerHTML = Array.from({ length: NUM + 1 }, (_, i) => `
   <section class="row"><h2><span id="name-${i}">${i ? 'Ability ' + i : 'Hero card'}</span><small id="cnt-${i}"></small></h2>
   <div class="pair"><div class="side mw-parser-output" id="side-0-${i}"></div><div class="side mw-parser-output" id="side-1-${i}"></div></div></section>`).join('');
+}
+
+// Every hero that has ability data and is playable; read from the wiki's current data, so new heroes show up on their own.
+async function listHeroes() {
+  const [ac, hd] = await Promise.all([pageJson(DATA_PAGE), pageJson(HERODATA_PAGE)]);
+  return Object.keys(ac)
+    .filter(k => ac[k].Name && hd[k] && !hd[k].IsDisabled && !hd[k].InDevelopment && [1, 2, 3, 4].some(n => ac[k][n]))
+    .map(k => ({ key: k, name: ac[k].Name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// {{Infobox hero …}} with its static arguments (release date, codenames, pronouns) copied from the hero's wiki page.
+async function heroInfobox(h) {
+  const fallback = `{{Infobox hero|key=${h.key}}}`;
+  const j = await api({ action: 'query', prop: 'revisions', rvslots: 'main', rvprop: 'content', titles: h.name, redirects: 1 });
+  const wt = j.query.pages[0].revisions?.[0]?.slots.main.content ?? '';
+  const start = wt.search(/\{\{\s*Infobox hero/i);
+  if (start < 0) return fallback;
+  let depth = 0;
+  for (let i = start; i < wt.length - 1; i++) {
+    const two = wt.substr(i, 2);
+    if (two === '{{') { depth++; i++; } else if (two === '}}' && --depth === 0) return wt.slice(start, i + 2);
+    else if (two === '}}') i++;
+  }
+  return fallback;
+}
+
+// Having abilities is monotonic (a hero is filled in once), so a binary search finds the first revision containing it.
+async function firstRevisionWith(key) {
+  let lo = 0, hi = revs.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if ((await pageJson(null, revs[mid].revid))[key]?.[1]) hi = mid; else lo = mid + 1;
+  }
+  return lo;
+}
+
+let heroGen = 0;
+async function selectHero(key) {
+  const gen = ++heroGen, h = heroes.find(x => x.key === key);
+  sides.forEach(s => { s.token++; s.cards = []; });
+  setStatus(`Loading ${h.name}…`);
+  try {
+    const [head, infobox] = await Promise.all([pageJson(DATA_PAGE).then(d => d[key]), heroInfobox(h)]);
+    if (gen !== heroGen) return; // another hero was picked meanwhile
+    const abilityKeys = [1, 2, 3, 4].map(n => head[n]?.Key).filter(Boolean);
+    const common = abilityKeys.reduce((a, b) => { let i = 0; while (a[i] && a[i] === b[i]) i++; return a.slice(0, i); });
+    HERO = { ...h, infobox,
+      langPrefix: common.slice(0, common.lastIndexOf('_') + 1) || 'ability_', // e.g. ability_unicorn_
+      descKeys: new Set(JSON.stringify(head).match(/"DescKey":"[^"]+"/g)?.map(m => m.slice(11, -1)) ?? []) };
+    NUM = abilityKeys.length;
+    renderCache = new Map(); langRenderCache = new Map();
+    document.title = `${h.name} ability comparison`;
+    history.replaceState(null, '', '#' + key);
+    buildRows();
+    const first = await firstRevisionWith(key);
+    if (gen !== heroGen) return;
+    $('sel-0').selectedIndex = first;
+    $('sel-1').selectedIndex = revs.length - 1;
+    loadSide(0); loadSide(1);
+  } catch (e) { setStatus(`Failed to load ${h.name}: ${e.message}`, true); }
+}
 
 async function loadSide(s) {
   const side = sides[s], token = ++side.token, rev = +$('sel-' + s).value;
@@ -374,15 +444,18 @@ async function loadSide(s) {
     revs = (await listRevisions(DATA_PAGE)).filter(r => /^Deadbot v/.test(r.comment || '')); // other edits are not game patches
     // optional: without them old cards keep current texts / stats
     [langRevs, heroRevs] = await Promise.all([LANG_PAGE, HERODATA_PAGE].map(t => listRevisions(t).catch(() => [])));
+    heroes = await listHeroes();
     const opts = revs.map(r => `<option value="${r.revid}">${r.timestamp.slice(0, 10)} · ${r.comment.replace('Deadbot ', '')} · r${r.revid}</option>`).join('');
     [0, 1].forEach(s => { $('sel-' + s).innerHTML = opts; $('sel-' + s).addEventListener('change', () => loadSide(s)); });
-    $('sel-0').selectedIndex = 0;
-    $('sel-1').selectedIndex = revs.length - 1;
+    $('sel-hero').innerHTML = heroes.map(h => `<option value="${h.key}">${h.name}</option>`).join('');
+    $('sel-hero').addEventListener('change', () => selectHero($('sel-hero').value));
     $('swap').addEventListener('click', () => {
       const a = $('sel-0').value; $('sel-0').value = $('sel-1').value; $('sel-1').value = a;
       loadSide(0); loadSide(1);
     });
-    loadSide(0); loadSide(1);
+    const wanted = location.hash.slice(1);
+    $('sel-hero').value = heroes.some(h => h.key === wanted) ? wanted : heroes[0].key;
+    selectHero($('sel-hero').value);
   } catch (e) { setStatus('Failed to load revision list: ' + e.message, true); }
 })();
 </script>
