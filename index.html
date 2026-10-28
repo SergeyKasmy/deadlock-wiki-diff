@@ -12,7 +12,6 @@
 body { margin: 0; background: #141414; color: oklch(0.953948 0.0168318 58.6608); font: 15px/1.4 Inter, system-ui, sans-serif; }
 header { position: sticky; top: 0; z-index: 10; background: #141414ee; backdrop-filter: blur(6px); border-bottom: 1px solid #2a2a2a; padding: 10px 16px; }
 header .bar { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; max-width: 1100px; margin: 0 auto; }
-header h1 { font-size: 1.1rem; margin: 0 auto 0 0; flex: 0 1 auto; min-width: 0; }
 /* the revision labels are long, so the selects shrink (ellipsis) and wrap instead of widening the page */
 label { display: flex; flex-direction: column; gap: 2px; font-size: .75rem; color: #aaa; flex: 1 1 240px; min-width: 0; }
 /* the hero list is the wiki's own {{Hero Navbox}}; its card masks come from cdn.deadlock.wiki, which blocks CORS requests
@@ -20,11 +19,16 @@ label { display: flex; flex-direction: column; gap: 2px; font-size: .75rem; colo
 .mw-parser-output .HeroCard .CardBacker { mask-image: none; border-radius: 5%; }
 .mw-parser-output .HeroCard .CardShape { mask-image: none; background-color: transparent; }
 .mw-parser-output .HeroCard:not(.NewHero) .NewLabel { display: none; } /* hidden by the wiki's site CSS, not by the template */
-.hero-pick { display: flex; align-items: center; gap: 10px; }
+.hero-pick { display: flex; align-items: center; gap: 10px; margin-right: auto; }
 .hero-pick #hero-current { min-height: 105px; }
 dialog { background: #1b1b1b; color: inherit; border: 1px solid #3a3a3a; border-radius: 8px; padding: 12px; max-width: min(1100px, 94vw); max-height: 90vh; overflow: auto; }
 dialog::backdrop { background: #000a; }
-#picker-grid .HeroCard { cursor: pointer; }
+#picker-grid .HeroCard, #picker-items [data-item-name] { cursor: pointer; }
+.tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+.tabs button { background: #232323; color: inherit; border: 1px solid #3a3a3a; border-radius: 4px; padding: 6px 14px; font: inherit; cursor: pointer; }
+.tabs button.active { background: #2e3b35; border-color: var(--link-color, #60f8b3); }
+#picker-items .unavailable { opacity: .35; pointer-events: none; }
+#picker-items .current { outline: 2px solid var(--link-color, #60f8b3); outline-offset: 1px; }
 #picker-grid .HeroCard.unavailable { opacity: .35; pointer-events: none; }
 #picker-grid .HeroCard.current { outline: 2px solid var(--link-color, #60f8b3); outline-offset: 1px; }
 label.check { flex: 0 0 auto; cursor: pointer; font-size: .85rem; color: inherit; }
@@ -67,7 +71,6 @@ main { max-width: 1100px; margin: 0 auto; padding: 8px 16px 40px; }
 <header>
   <div class="bar">
     <div class="hero-pick"><div id="hero-current" class="mw-parser-output"></div><button class="swap" id="pick">Select</button></div>
-    <h1>Ability cards, old vs new</h1>
     <label>Old <select id="sel-0"></select></label>
     <button class="swap" id="swap" title="Swap sides">⇄</button>
     <label>New <select id="sel-1"></select></label>
@@ -77,7 +80,11 @@ main { max-width: 1100px; margin: 0 auto; padding: 8px 16px 40px; }
 </header>
 <main id="main"></main>
 
-<dialog id="picker"><div id="picker-grid" class="mw-parser-output"></div></dialog>
+<dialog id="picker">
+  <div class="tabs"><button class="active" data-tab="picker-grid">Heroes</button><button data-tab="picker-items">Items</button></div>
+  <div id="picker-grid" class="mw-parser-output"></div>
+  <div id="picker-items" class="mw-parser-output" hidden></div>
+</dialog>
 
 <script>
 const API = 'https://deadlock.wiki/api.php';
@@ -85,6 +92,7 @@ const API = 'https://deadlock.wiki/api.php';
 let HERO = null, NUM = 4;
 const HERODATA_PAGE = 'Data:HeroData.json';
 const DATA_PAGE = 'Data:AbilityCards.json';
+const ITEMS_PAGE = 'Data:ItemCards.json';
 
 const $ = id => document.getElementById(id);
 const statusEl = $('status');
@@ -233,11 +241,21 @@ function spliceDescriptions(card, langCard, oldAb, curAb) {
   });
 }
 
+// An item is a single card; |default=1 makes the wiki skip its Default/Enhanced tabs, which need the wiki's JS.
+async function renderItem(rev) {
+  const slice = (await pageJson(null, rev))[HERO.key];
+  if (!slice?.Name) throw new Error(`${HERO.name} is not in r${rev} yet, pick a later revision`);
+  const { css, doc } = await parseWiki(`{{Infobox item/auto|${slice.Name}|default=1}}`, ITEMS_PAGE, JSON.stringify({ [HERO.key]: slice }));
+  const card = doc.querySelector('.infobox_item');
+  if (!card) throw new Error('item card missing');
+  return { slice, css, hero: card.outerHTML, html: [] }; // the card takes the hero card's slot
+}
+
 // The wiki's own renderer with the old data page swapped in via TemplateSandbox.
 // Only the hero's slice is sent (renders identically to the full file, but ~100x smaller).
 async function render(rev) {
   if (!renderCache.has(rev)) {
-    const p = (async () => {
+    const p = HERO.isItem ? renderItem(rev) : (async () => {
       const slice = hoistHeaders(structuredClone(await heroSlice(rev)));
       const nums = Array.from({ length: NUM }, (_, i) => i + 1).filter(n => slice[n]);
       const { css, cards } = await renderCards(DATA_PAGE, JSON.stringify({ [HERO.key]: slice }), nums);
@@ -382,11 +400,11 @@ function recompute() {
 
 /* ---- page ---- */
 const sides = [{ cards: [], token: 0 }, { cards: [], token: 0 }];
-let allRevs = [], revs = [], heroes = []; // revs: the revisions from the selected hero's first one on
+let allRevs = [], itemRevs = [], revs = [], heroes = [], items = []; // revs: the revisions from the selected hero's first one on
 
 function buildRows() {
   $('main').innerHTML = Array.from({ length: NUM + 1 }, (_, i) => `
-  <section class="row"><h2><span id="name-${i}">${i ? 'Ability ' + i : 'Hero card'}</span></h2>
+  <section class="row"><h2><span id="name-${i}">${i ? 'Ability ' + i : HERO.isItem ? 'Item card' : 'Hero card'}</span></h2>
   <div class="pair"><div class="side mw-parser-output" id="side-0-${i}"></div><div class="side mw-parser-output" id="side-1-${i}"></div></div></section>`).join('');
 }
 
@@ -408,6 +426,11 @@ async function listHeroes() {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+async function listItems() {
+  const ac = await pageJson(ITEMS_PAGE);
+  return Object.entries(ac).filter(([, v]) => v.Name && v.Tier && !v.IsDisabled && !v.StreetBrawl).map(([key, v]) => ({ key, name: v.Name }));
+}
+
 // {{Infobox hero …}} with its static arguments (release date, codenames, pronouns) copied from the hero's wiki page.
 async function heroInfobox(h) {
   const fallback = `{{Infobox hero|key=${h.key}}}`;
@@ -425,18 +448,18 @@ async function heroInfobox(h) {
 }
 
 // Having abilities is monotonic (a hero is filled in once), so a binary search finds the first revision containing it.
-async function firstRevisionWith(key) {
-  if ((await pageJson(null, allRevs[0].revid))[key]?.[1]) return 0; // heroes from the start of the history need only this one fetch
-  let lo = 0, hi = allRevs.length - 1;
+async function firstRevisionWith(list, has) {
+  if (has(await pageJson(null, list[0].revid))) return 0; // entries from the start of the history need only this one fetch
+  let lo = 0, hi = list.length - 1;
   while (lo < hi) {
     const mid = (lo + hi) >> 1;
-    if ((await pageJson(null, allRevs[mid].revid))[key]?.[1]) hi = mid; else lo = mid + 1;
+    if (has(await pageJson(null, list[mid].revid))) hi = mid; else lo = mid + 1;
   }
   return lo;
 }
 
 /* ---- hero picker: the wiki's own {{Hero Navbox}} (the card grid at the top of /Heroes), rendered at runtime ---- */
-let navCards = []; // the grid's .HeroCard elements; empty when the template could not be rendered
+let navCards = [], itemEls = []; // the grids' .HeroCard / item link elements; empty when the template could not be rendered
 
 async function setupPicker() {
   const grid = $('picker-grid');
@@ -451,6 +474,7 @@ async function setupPicker() {
     grid.innerHTML = '<div class="heronav-grid">' + heroes.map(h => `<div class="HeroCard" data-plain="${h.name}" style="width:auto;aspect-ratio:auto;padding:6px 10px">${h.name}</div>`).join('') + '</div>';
     navCards = [...grid.querySelectorAll('.HeroCard')];
   }
+  await setupItemPicker();
   const nameOf = c => c.querySelector('[data-hero-name]')?.dataset.heroName ?? c.dataset.plain;
   navCards.forEach(c => {
     c.querySelector('a')?.removeAttribute('href'); // clicks switch the hero here instead of leaving for the wiki
@@ -463,15 +487,56 @@ async function setupPicker() {
     $('picker').close();
     selectHero(hero.key);
   });
-  $('pick').addEventListener('click', () => $('picker').showModal());
+  $('pick').addEventListener('click', () => { showTab(HERO?.isItem ? 'picker-items' : 'picker-grid'); $('picker').showModal(); });
+  document.querySelector('.tabs').addEventListener('click', e => { if (e.target.dataset.tab) showTab(e.target.dataset.tab); });
   $('picker').addEventListener('click', e => { if (e.target === $('picker')) $('picker').close(); }); // backdrop click
+}
+
+// Same idea as the hero grid, from the wiki's {{Item Navbox}} (items split by type and price tier).
+async function setupItemPicker() {
+  const grid = $('picker-items');
+  try {
+    const j = await api({ action: 'parse', prop: 'text', contentmodel: 'wikitext', title: 'Items', text: '{{Item Navbox}}' }, true);
+    const doc = new DOMParser().parseFromString(j.parse.text, 'text/html');
+    $('nav-css').textContent += '\n' + [...doc.querySelectorAll('style')].map(s => s.textContent).join('\n');
+    grid.innerHTML = doc.querySelector('.mw-parser-output').innerHTML.replace(/<style[\s\S]*?<\/style>/g, '');
+  } catch (e) {
+    console.warn('item navbox unavailable, using a plain list', e);
+    grid.innerHTML = items.map(i => `<span class="item-nav-search-item" data-item-name="${i.name}" style="margin:4px">${i.name}</span>`).join('');
+  }
+  grid.querySelector('.item-nav-search-container')?.remove(); // the wiki's search box is filled by its own JS
+  grid.querySelectorAll('a').forEach(a => a.removeAttribute('href'));
+  itemEls = [...grid.querySelectorAll('.item-nav-search-item')];
+  itemEls.forEach(e => { if (!items.some(i => i.name === e.dataset.itemName)) e.classList.add('unavailable'); });
+  grid.addEventListener('click', e => {
+    const item = items.find(i => i.name === e.target.closest('[data-item-name]')?.dataset.itemName);
+    if (!item) return;
+    $('picker').close();
+    selectItem(item.key);
+  });
+}
+
+function showTab(id) {
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
+  ['picker-grid', 'picker-items'].forEach(t => { $(t).hidden = t !== id; });
 }
 
 // Header shows the selected hero's card, small, exactly as in the grid.
 function showCurrentHero() {
+  const host = $('hero-current');
+  itemEls.forEach(e => e.classList.toggle('current', HERO.isItem && e.dataset.itemName === HERO.name));
+  host.style.minHeight = HERO.isItem ? '0' : '';
+  if (HERO.isItem) {
+    navCards.forEach(c => c.classList.remove('current'));
+    const el = itemEls.find(e => e.classList.contains('current'));
+    if (!el) { host.textContent = HERO.name; return; }
+    const copy = el.cloneNode(true);
+    copy.classList.remove('current');
+    host.replaceChildren(copy);
+    return;
+  }
   navCards.forEach(c => c.classList.toggle('current', c.querySelector('[data-hero-name]')?.dataset.heroName === HERO.name || c.dataset.plain === HERO.name));
   const card = navCards.find(c => c.classList.contains('current'));
-  const host = $('hero-current');
   if (!card) { host.textContent = HERO.name; return; }
   const copy = card.cloneNode(true);
   copy.classList.remove('current');
@@ -499,14 +564,36 @@ async function selectHero(key) {
     showCurrentHero();
     history.replaceState(null, '', '#' + key);
     buildRows();
-    const first = await firstRevisionWith(key);
+    const first = await firstRevisionWith(allRevs, d => d[key]?.[1]);
     if (gen !== heroGen) return;
-    revs = allRevs.slice(first); // the list starts where the hero got its abilities (Seven: the start of the history)
-    // Old defaults to the release revision (earlier ones are pre-release data), or the first one without a date
-    $('sel-0').selectedIndex = Math.max(0, fillRevisionSelects());
-    $('sel-1').selectedIndex = revs.length - 1;
-    loadSide(0); loadSide(1);
+    showRevs(allRevs, first); // the list starts where the hero got its abilities (Seven: the start of the history)
   } catch (e) { setStatus(`Failed to load ${h.name}: ${e.message}`, true); }
+}
+
+function showRevs(list, first) {
+  revs = list.slice(first);
+  // Old defaults to the release revision (earlier ones are pre-release data), or the first one without a date
+  $('sel-0').selectedIndex = Math.max(0, fillRevisionSelects());
+  $('sel-1').selectedIndex = revs.length - 1;
+  loadSide(0); loadSide(1);
+}
+
+async function selectItem(key) {
+  const gen = ++heroGen, it = items.find(x => x.key === key);
+  sides.forEach(s => { s.token++; s.cards = []; });
+  setStatus(`Loading ${it.name}…`);
+  try {
+    HERO = { ...it, isItem: true, infobox: '' };
+    NUM = 0; // the item card is slot 0, like the hero card
+    renderCache = new Map(); langRenderCache = new Map();
+    document.title = `${it.name} item comparison`;
+    showCurrentHero();
+    history.replaceState(null, '', '#' + key);
+    buildRows();
+    const first = await firstRevisionWith(itemRevs, d => d[key]?.Name);
+    if (gen !== heroGen) return;
+    showRevs(itemRevs, first);
+  } catch (e) { setStatus(`Failed to load ${it.name}: ${e.message}`, true); }
 }
 
 async function loadSide(s) {
@@ -539,7 +626,8 @@ async function loadSide(s) {
     allRevs = (await listRevisions(DATA_PAGE)).filter(r => /^deadbot v/i.test(r.comment || '')); // other edits are not game patches
     // optional: without them old cards keep current texts / stats
     [langRevs, heroRevs] = await Promise.all([LANG_PAGE, HERODATA_PAGE].map(t => listRevisions(t).catch(() => [])));
-    heroes = await listHeroes();
+    itemRevs = (await listRevisions(ITEMS_PAGE).catch(() => [])).filter(r => /^deadbot v/i.test(r.comment || ''));
+    [heroes, items] = await Promise.all([listHeroes(), itemRevs.length ? listItems().catch(() => []) : []]);
     [0, 1].forEach(s => $('sel-' + s).addEventListener('change', () => loadSide(s)));
     $('hl').addEventListener('change', recompute);
     await setupPicker();
@@ -548,7 +636,8 @@ async function loadSide(s) {
       loadSide(0); loadSide(1);
     });
     const wanted = location.hash.slice(1);
-    selectHero(heroes.some(h => h.key === wanted) ? wanted : heroes[0].key);
+    if (items.some(i => i.key === wanted)) selectItem(wanted);
+    else selectHero(heroes.some(h => h.key === wanted) ? wanted : heroes[0].key);
   } catch (e) { setStatus('Failed to load revision list: ' + e.message, true); }
 })();
 </script>
