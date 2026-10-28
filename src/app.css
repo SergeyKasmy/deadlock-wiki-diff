@@ -1,0 +1,85 @@
+:root {
+  color-scheme: dark;
+  --text: oklch(0.953948 0.0168318 58.6608); /* the wiki's text colour */
+}
+body {
+  margin: 0;
+  background: #141414;
+  color: var(--text);
+  font: 15px/1.4 Inter, system-ui, sans-serif;
+}
+
+/* ---- fixes for wiki HTML rendered outside the wiki ---- */
+
+/* The hero navbox's card masks come from cdn.deadlock.wiki, which blocks CORS requests from other origins, so the
+   card frame is drawn from its plain background image instead. */
+.mw-parser-output .HeroCard .CardBacker {
+  mask-image: none;
+  border-radius: 5%;
+}
+.mw-parser-output .HeroCard .CardShape {
+  mask-image: none;
+  background-color: transparent;
+}
+.mw-parser-output .HeroCard:not(.NewHero) .NewLabel {
+  display: none; /* hidden by the wiki's site CSS, not by the template */
+}
+
+/* Codex base button rule (the wiki's skin supplies it; divs here never match the :enabled variants) */
+.cdx-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  min-height: 32px;
+  max-width: 28rem;
+  margin: 0;
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 2px;
+  padding-right: 11px;
+  padding-left: 11px;
+  font-family: inherit;
+  font-size: var(--font-size-medium, 1rem);
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+  transition-property: background-color, color, border-color, box-shadow;
+  transition-duration: 0.1s;
+}
+
+/* ---- from MediaWiki:Gadget-ability-upgrades.css, with .hide scoped so it cannot leak into the page chrome ---- */
+.ability-card .hide {
+  display: none !important;
+}
+.ability-attr {
+  transition: text-shadow 0.6s ease;
+}
+.ability-attr.highlight {
+  text-shadow: 0 0 6px rgba(255, 250, 0, 0.6), 0 0 12px rgba(255, 250, 0, 0.5), 0 0 24px rgba(255, 250, 0, 0.4);
+}
+.ability-upgrade {
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+.ability-upgrade.hovered {
+  background-color: #3d2d52a3 !important;
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2) !important;
+}
+.ability-upgrade.selected {
+  background-color: #503667 !important;
+}
+.ability-upgrade.selected.hovered {
+  background-color: #3d2d52a3 !important;
+}
+.ability-upgrade-header {
+  transition: background-color 0.2s ease;
+}
+.ability-upgrade.selected .ability-upgrade-header {
+  background-color: #11140e !important;
+  transition: background-color 0.2s ease;
+}

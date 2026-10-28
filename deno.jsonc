@@ -1,0 +1,74 @@
+{
+  "tasks": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings && tsc -p tsconfig.node.json",
+    "lint": "deno lint && eslint --max-warnings 0 .",
+    "lint:fix": "deno lint --fix && eslint --fix .",
+    "fmt": "deno fmt",
+    "fmt:check": "deno fmt --check",
+    // everything a change must pass; run before committing
+    "verify": "deno task fmt:check && deno task lint && deno task check && deno task build"
+  },
+  // vite and its plugins resolve packages Node-style, so they need a real node_modules
+  "nodeModulesDir": "auto",
+  // lets `deno fmt` format .svelte files
+  "unstable": ["fmt-component"],
+  "imports": {
+    "@eslint/js": "npm:@eslint/js@^10.0.1",
+    "@sveltejs/vite-plugin-svelte": "npm:@sveltejs/vite-plugin-svelte@^7.3.1",
+    "@types/node": "npm:@types/node@^26.6.5",
+    "eslint": "npm:eslint@^10.13.0",
+    "eslint-plugin-svelte": "npm:eslint-plugin-svelte@^3.23.1",
+    "globals": "npm:globals@^17.13.0",
+    "svelte": "npm:svelte@^5.57.3",
+    "svelte-check": "npm:svelte-check@^4.7.7",
+    "svelte-eslint-parser": "npm:svelte-eslint-parser@^1.10.0",
+    // svelte-check drives the TypeScript JS API, which TypeScript 7 (the Go port) no longer ships
+    "typescript": "npm:typescript@^6.0.3",
+    "typescript-eslint": "npm:typescript-eslint@^8.72.1",
+    "vite": "npm:vite@^8.3.5"
+  },
+  // the same strictness as tsconfig.json, so the Deno LSP in editors reports what svelte-check does
+  "compilerOptions": {
+    "lib": ["es2023", "dom", "dom.iterable"],
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"],
+      "include": [
+        "default-param-last",
+        "eqeqeq",
+        "explicit-module-boundary-types",
+        "guard-for-in",
+        "no-eval",
+        "no-non-null-asserted-optional-chain",
+        "no-non-null-assertion",
+        "no-self-compare",
+        "no-sparse-arrays",
+        "no-sync-fn-in-async-fn",
+        "no-throw-literal",
+        "no-top-level-await",
+        "no-useless-rename",
+        "verbatim-module-syntax"
+      ]
+    }
+  },
+  "fmt": {
+    "lineWidth": 120,
+    "singleQuote": true
+  },
+  "exclude": ["dist/"]
+}
