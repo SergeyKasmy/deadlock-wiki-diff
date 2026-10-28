@@ -15,6 +15,18 @@ header .bar { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; max-w
 header h1 { font-size: 1.1rem; margin: 0 auto 0 0; flex: 0 1 auto; min-width: 0; }
 /* the revision labels are long, so the selects shrink (ellipsis) and wrap instead of widening the page */
 label { display: flex; flex-direction: column; gap: 2px; font-size: .75rem; color: #aaa; flex: 1 1 240px; min-width: 0; }
+/* the hero list is the wiki's own {{Hero Navbox}}; its card masks come from cdn.deadlock.wiki, which blocks CORS requests
+   from other origins, so the card frame is drawn from its plain background image instead */
+.mw-parser-output .HeroCard .CardBacker { mask-image: none; border-radius: 5%; }
+.mw-parser-output .HeroCard .CardShape { mask-image: none; background-color: transparent; }
+.mw-parser-output .HeroCard:not(.NewHero) .NewLabel { display: none; } /* hidden by the wiki's site CSS, not by the template */
+.hero-pick { display: flex; align-items: center; gap: 10px; }
+.hero-pick #hero-current { min-height: 105px; }
+dialog { background: #1b1b1b; color: inherit; border: 1px solid #3a3a3a; border-radius: 8px; padding: 12px; max-width: min(1100px, 94vw); max-height: 90vh; overflow: auto; }
+dialog::backdrop { background: #000a; }
+#picker-grid .HeroCard { cursor: pointer; }
+#picker-grid .HeroCard.unavailable { opacity: .35; pointer-events: none; }
+#picker-grid .HeroCard.current { outline: 2px solid var(--link-color, #60f8b3); outline-offset: 1px; }
 label.check { flex: 0 0 auto; cursor: pointer; font-size: .85rem; color: inherit; }
 label select { width: 100%; min-width: 0; text-overflow: ellipsis; }
 select, button.swap { background: #232323; color: inherit; border: 1px solid #3a3a3a; border-radius: 4px; padding: 6px 8px; font: inherit; }
@@ -49,11 +61,13 @@ main { max-width: 1100px; margin: 0 auto; padding: 8px 16px 40px; }
 .ability-upgrade.selected .ability-upgrade-header { background-color: #11140E !important; transition: background-color 0.2s ease; }
 </style>
 <style id="wiki-css"></style>
+<style id="nav-css"></style>
 </head>
 <body>
 <header>
   <div class="bar">
-    <h1><select id="sel-hero" title="Hero"></select> &mdash; ability cards, old vs new</h1>
+    <div class="hero-pick"><div id="hero-current" class="mw-parser-output"></div><button class="swap" id="pick">Select</button></div>
+    <h1>Ability cards, old vs new</h1>
     <label>Old <select id="sel-0"></select></label>
     <button class="swap" id="swap" title="Swap sides">⇄</button>
     <label>New <select id="sel-1"></select></label>
@@ -62,6 +76,8 @@ main { max-width: 1100px; margin: 0 auto; padding: 8px 16px 40px; }
   <div id="status">Loading revision list…</div>
 </header>
 <main id="main"></main>
+
+<dialog id="picker"><div id="picker-grid" class="mw-parser-output"></div></dialog>
 
 <script>
 const API = 'https://deadlock.wiki/api.php';
@@ -419,6 +435,51 @@ async function firstRevisionWith(key) {
   return lo;
 }
 
+/* ---- hero picker: the wiki's own {{Hero Navbox}} (the card grid at the top of /Heroes), rendered at runtime ---- */
+let navCards = []; // the grid's .HeroCard elements; empty when the template could not be rendered
+
+async function setupPicker() {
+  const grid = $('picker-grid');
+  try {
+    const j = await api({ action: 'parse', prop: 'text', contentmodel: 'wikitext', title: 'Heroes', text: '{{Hero Navbox}}' }, true);
+    const doc = new DOMParser().parseFromString(j.parse.text, 'text/html');
+    $('nav-css').textContent = [...doc.querySelectorAll('style')].map(s => s.textContent).join('\n');
+    grid.innerHTML = doc.querySelector('.mw-parser-output').innerHTML.replace(/<style[\s\S]*?<\/style>/g, '');
+    navCards = [...grid.querySelectorAll('.HeroCard')];
+  } catch (e) {
+    console.warn('hero navbox unavailable, using a plain list', e);
+    grid.innerHTML = '<div class="heronav-grid">' + heroes.map(h => `<div class="HeroCard" data-plain="${h.name}" style="width:auto;aspect-ratio:auto;padding:6px 10px">${h.name}</div>`).join('') + '</div>';
+    navCards = [...grid.querySelectorAll('.HeroCard')];
+  }
+  const nameOf = c => c.querySelector('[data-hero-name]')?.dataset.heroName ?? c.dataset.plain;
+  navCards.forEach(c => {
+    c.querySelector('a')?.removeAttribute('href'); // clicks switch the hero here instead of leaving for the wiki
+    if (!heroes.some(h => h.name === nameOf(c))) c.classList.add('unavailable'); // listed on the wiki but nothing to compare
+  });
+  grid.addEventListener('click', e => {
+    const card = e.target.closest('.HeroCard');
+    const hero = card && heroes.find(h => h.name === nameOf(card));
+    if (!hero) return;
+    $('picker').close();
+    selectHero(hero.key);
+  });
+  $('pick').addEventListener('click', () => $('picker').showModal());
+  $('picker').addEventListener('click', e => { if (e.target === $('picker')) $('picker').close(); }); // backdrop click
+}
+
+// Header shows the selected hero's card, small, exactly as in the grid.
+function showCurrentHero() {
+  navCards.forEach(c => c.classList.toggle('current', c.querySelector('[data-hero-name]')?.dataset.heroName === HERO.name || c.dataset.plain === HERO.name));
+  const card = navCards.find(c => c.classList.contains('current'));
+  const host = $('hero-current');
+  if (!card) { host.textContent = HERO.name; return; }
+  const copy = card.cloneNode(true);
+  copy.classList.remove('current');
+  copy.style.width = '64px';
+  copy.querySelector('.HeroName')?.style.setProperty('--text-size', '12px');
+  host.replaceChildren(copy);
+}
+
 let heroGen = 0;
 async function selectHero(key) {
   const gen = ++heroGen, h = heroes.find(x => x.key === key);
@@ -435,6 +496,7 @@ async function selectHero(key) {
     NUM = abilityKeys.length;
     renderCache = new Map(); langRenderCache = new Map();
     document.title = `${h.name} ability comparison`;
+    showCurrentHero();
     history.replaceState(null, '', '#' + key);
     buildRows();
     const first = await firstRevisionWith(key);
@@ -480,15 +542,13 @@ async function loadSide(s) {
     heroes = await listHeroes();
     [0, 1].forEach(s => $('sel-' + s).addEventListener('change', () => loadSide(s)));
     $('hl').addEventListener('change', recompute);
-    $('sel-hero').innerHTML = heroes.map(h => `<option value="${h.key}">${h.name}</option>`).join('');
-    $('sel-hero').addEventListener('change', () => selectHero($('sel-hero').value));
+    await setupPicker();
     $('swap').addEventListener('click', () => {
       const a = $('sel-0').value; $('sel-0').value = $('sel-1').value; $('sel-1').value = a;
       loadSide(0); loadSide(1);
     });
     const wanted = location.hash.slice(1);
-    $('sel-hero').value = heroes.some(h => h.key === wanted) ? wanted : heroes[0].key;
-    selectHero($('sel-hero').value);
+    selectHero(heroes.some(h => h.key === wanted) ? wanted : heroes[0].key);
   } catch (e) { setStatus('Failed to load revision list: ' + e.message, true); }
 })();
 </script>
