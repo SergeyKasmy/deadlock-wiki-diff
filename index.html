@@ -26,7 +26,10 @@ main { max-width: 1100px; margin: 0 auto; padding: 8px 16px 40px; }
 .side { display: flex; justify-content: center; align-items: flex-start; min-width: 0; }
 /* the wiki's card CSS is scoped to .mw-parser-output; the colour/font pin keeps cards identical to the wiki */
 .side.mw-parser-output { color: oklch(0.953948 0.0168318 58.6608); font-family: Inter, sans-serif; --link-color: #60f8b3; }
-.side a { color: var(--link-color); }.diff-del { background: rgba(255, 70, 70, .35); border-radius: 2px; }
+.side a { color: var(--link-color); }
+/* The wiki masks this backdrop with a torn-paper PNG. CSS masks are fetched in CORS mode and cdn.deadlock.wiki only
+   allows its own origin, so the mask is blocked here and the unmasked backdrop would show as a stray shape. */
+.side.mw-parser-output .infobox-h-title-hero-tornbox { display: none; }.diff-del { background: rgba(255, 70, 70, .35); border-radius: 2px; }
 .diff-add { background: rgba(60, 220, 110, .3); border-radius: 2px; }
 @media (max-width: 1080px) { .pair { grid-template-columns: 1fr; } }
 </style>
@@ -147,11 +150,15 @@ async function parseWiki(text, sandboxTitle, sandboxText) {
   return { css: [...doc.querySelectorAll('style')].map(s => s.textContent).join('\n'), doc };
 }
 
-async function renderCards(sandboxTitle, sandboxText) {
-  const text = Array.from({ length: NUM }, (_, i) => `{{AbilitySection|hero_name=${HERO.name}|ability_num=${i + 1}}}`).join('');
+// nums: the ability slots that exist in the data being rendered (early revisions of unfinished heroes can miss some);
+// the result has one entry per slot, null where there is no ability.
+async function renderCards(sandboxTitle, sandboxText, nums = Array.from({ length: NUM }, (_, i) => i + 1)) {
+  const text = nums.map(n => `{{AbilitySection|hero_name=${HERO.name}|ability_num=${n}}}`).join('');
   const { css, doc } = await parseWiki(text, sandboxTitle, sandboxText);
-  const cards = [...doc.querySelectorAll('.ability-card')];
-  if (cards.length !== NUM) throw new Error('render failed');
+  const found = [...doc.querySelectorAll('.ability-card')];
+  if (found.length !== nums.length) throw new Error('render failed');
+  const cards = Array(NUM).fill(null);
+  nums.forEach((n, i) => { cards[n - 1] = found[i]; });
   return { css, cards };
 }
 
@@ -203,19 +210,20 @@ async function render(rev) {
   if (!renderCache.has(rev)) {
     const p = (async () => {
       const slice = hoistHeaders(structuredClone(await heroSlice(rev)));
-      const { css, cards } = await renderCards(DATA_PAGE, JSON.stringify({ [HERO.key]: slice }));
+      const nums = Array.from({ length: NUM }, (_, i) => i + 1).filter(n => slice[n]);
+      const { css, cards } = await renderCards(DATA_PAGE, JSON.stringify({ [HERO.key]: slice }), nums);
       const info = revs.find(r => r.revid === rev);
       const lang = info && matchRev(langRevs, info);
       // the newest translations are what the renderer already used
       if (lang && lang.revid !== langRevs.at(-1).revid) {
         try {
           const [langCards, cur] = await Promise.all([renderWithLang(lang.revid), heroSlice(revs.at(-1).revid)]);
-          cards.forEach((c, i) => spliceDescriptions(c, langCards[i], slice[i + 1], cur[i + 1]));
+          cards.forEach((c, i) => c && langCards[i] && spliceDescriptions(c, langCards[i], slice[i + 1], cur[i + 1]));
         } catch (e) { console.warn('old translations unavailable, showing current texts', e); }
       }
       let hero = null;
       try { hero = await renderHero(info); } catch (e) { console.warn('hero card unavailable', e); }
-      return { slice, css: css + (hero ? '\n' + hero.css : ''), hero: hero?.html, html: cards.map(c => c.outerHTML) };
+      return { slice, css: css + (hero ? '\n' + hero.css : ''), hero: hero?.html, html: cards.map(c => c?.outerHTML ?? null) };
     })();
     renderCache.set(rev, p);
     p.catch(() => renderCache.delete(rev));
@@ -333,7 +341,7 @@ function recompute() {
   for (let i = 0; i <= NUM; i++) { // slot 0 is the hero card, 1..NUM the abilities
     const [L, R] = sides.map(s => s.cards[i]);
     const counts = $('cnt-' + i);
-    if (!L || !R) { counts.textContent = ''; continue; }
+    if (!L || !R) { counts.textContent = L || R ? 'missing in one version' : ''; continue; }
     clearMarks(L); clearMarks(R);
     const ln = textNodes(L), rn = textNodes(R);
     const [ul, ur] = lcsUnmatched(ln.map(n => n.nodeValue.trim()), rn.map(n => n.nodeValue.trim()));
