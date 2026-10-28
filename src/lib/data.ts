@@ -66,12 +66,13 @@ export interface ItemCard {
 export type LegacyItem = Record<string, unknown>;
 
 /** Each data page at one revision (number) or its current one. */
-export const abilityCards = (rev?: number): Promise<Record<string, HeroAbilities>> =>
-  pageJson(rev ?? PAGES.abilities) as Promise<Record<string, HeroAbilities>>;
-export const heroData = (rev?: number): Promise<Record<string, HeroStats>> =>
-  pageJson(rev ?? PAGES.heroData) as Promise<Record<string, HeroStats>>;
-export const lang = (rev: number): Promise<Record<string, string>> => pageJson(rev) as Promise<Record<string, string>>;
-export const itemCards = (rev?: number): Promise<Record<string, ItemCard>> =>
-  pageJson(rev ?? PAGES.items) as Promise<Record<string, ItemCard>>;
-export const itemData = (rev: number): Promise<Record<string, LegacyItem>> =>
-  pageJson(rev) as Promise<Record<string, LegacyItem>>;
+export const abilityCards = (rev?: number, signal?: AbortSignal): Promise<Record<string, HeroAbilities>> =>
+  pageJson(rev ?? PAGES.abilities, signal) as Promise<Record<string, HeroAbilities>>;
+export const heroData = (rev?: number, signal?: AbortSignal): Promise<Record<string, HeroStats>> =>
+  pageJson(rev ?? PAGES.heroData, signal) as Promise<Record<string, HeroStats>>;
+export const lang = (rev: number, signal?: AbortSignal): Promise<Record<string, string>> =>
+  pageJson(rev, signal) as Promise<Record<string, string>>;
+export const itemCards = (rev?: number, signal?: AbortSignal): Promise<Record<string, ItemCard>> =>
+  pageJson(rev ?? PAGES.items, signal) as Promise<Record<string, ItemCard>>;
+export const itemData = (rev: number, signal?: AbortSignal): Promise<Record<string, LegacyItem>> =>
+  pageJson(rev, signal) as Promise<Record<string, LegacyItem>>;

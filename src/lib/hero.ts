@@ -27,9 +27,9 @@ async function listHeroes(): Promise<Entry[]> {
 }
 
 /** {{Infobox hero …}} with its static arguments (release date, codenames, pronouns) copied from the hero's page. */
-async function heroInfobox(hero: Entry): Promise<string> {
+async function heroInfobox(hero: Entry, signal?: AbortSignal): Promise<string> {
   const fallback = `{{Infobox hero|key=${hero.key}}}`;
-  const wt = await wikitext(hero.name);
+  const wt = await wikitext(hero.name, signal);
   const start = wt.search(/\{\{\s*Infobox hero/i);
   if (start < 0) return fallback;
   let depth = 0;
@@ -117,8 +117,11 @@ export async function heroKind(): Promise<Kind> {
     listPatches(PAGES.heroData).catch((): Revision[] => []),
   ]);
 
-  async function open(hero: Entry): Promise<Subject> {
-    const [head, infobox] = await Promise.all([abilityCards().then((d) => d[hero.key]), heroInfobox(hero)]);
+  async function open(hero: Entry, signal?: AbortSignal): Promise<Subject> {
+    const [head, infobox] = await Promise.all([
+      abilityCards(undefined, signal).then((d) => d[hero.key]),
+      heroInfobox(hero, signal),
+    ]);
     if (!head) throw new Error(`${hero.name} has no ability data`);
     const slots = SLOTS.filter((s) => head[s] !== undefined);
     const abilityKeys = slots.map((s) => head[s]?.Key ?? '');
@@ -133,13 +136,18 @@ export async function heroKind(): Promise<Kind> {
     const descKeys = new Set(JSON.stringify(head).match(/"DescKey":"[^"]+"/g)?.map((m) => m.slice(11, -1)));
 
     // the list starts where the hero got its abilities (Seven: the start of the history)
-    const revisions = await patchesWith(abilityPatches, abilityCards, (d) => d[hero.key]?.['1'] !== undefined);
+    const revisions = await patchesWith(
+      abilityPatches,
+      abilityCards,
+      (d) => d[hero.key]?.['1'] !== undefined,
+      signal,
+    );
     const released = releaseDate(infobox);
     const release = revisions.find((r) => Date.parse(r.timestamp) >= released); // NaN matches nothing
     const latest = lastOf(revisions);
 
-    async function abilitiesAt(revid: number): Promise<HeroAbilities> {
-      const slice = (await abilityCards(revid))[hero.key];
+    async function abilitiesAt(revid: number, signal: AbortSignal): Promise<HeroAbilities> {
+      const slice = (await abilityCards(revid, signal))[hero.key];
       // unreleased heroes sit in the file as a bare { Name } stub
       if (!slice?.['1']) throw new Error(`${hero.name} has no abilities in r${revid} yet, pick a later revision`);
       return slice;
@@ -149,10 +157,15 @@ export async function heroKind(): Promise<Kind> {
      * Ability cards, one per slot (null where `slice` has no ability). TemplateSandbox swaps only one page per
      * request, so old numbers (Data:AbilityCards) and old texts (Data:Lang) are rendered separately and merged.
      */
-    async function renderAbilities(sandboxPage: string, sandboxContent: unknown, slice: HeroAbilities) {
+    async function renderAbilities(
+      sandboxPage: string,
+      sandboxContent: unknown,
+      slice: HeroAbilities,
+      signal: AbortSignal,
+    ) {
       const present: Slot[] = slots.filter((s) => slice[s] !== undefined);
       const text = present.map((s) => `{{AbilitySection|hero_name=${hero.name}|ability_num=${s}}}`).join('');
-      const { css, doc } = await parse(text, hero.name, { page: sandboxPage, content: sandboxContent });
+      const { css, doc } = await parse(text, hero.name, { page: sandboxPage, content: sandboxContent }, signal);
       const found = [...doc.querySelectorAll('.ability-card')];
       if (found.length !== present.length) throw new Error('render failed');
       const cards = slots.map((s) => found[present.indexOf(s)] ?? null);
@@ -160,49 +173,54 @@ export async function heroKind(): Promise<Kind> {
     }
 
     /** Cards rendered with old translations but current data: only their description elements are used. */
-    const renderWithLang = memo(async (langRevid: number) => {
-      const texts = await lang(langRevid);
+    const renderWithLang = memo(async (langRevid: number, signal) => {
+      const texts = await lang(langRevid, signal);
       const keep = Object.fromEntries(
         Object.entries(texts).filter(([k]) => k.startsWith(langPrefix) || descKeys.has(k)),
       );
-      return (await renderAbilities(PAGES.lang, keep, head)).cards;
+      return (await renderAbilities(PAGES.lang, keep, head, signal)).cards;
     });
 
     /** The hero card, with Data:HeroData.json swapped for the revision of the same patch. */
-    async function renderHeroCard(patch: Revision) {
+    async function renderHeroCard(patch: Revision, signal: AbortSignal) {
       const hd = matchRevision(heroDataPatches, patch);
       const sandbox = hd && {
         page: PAGES.heroData,
-        content: { [hero.key]: fillDashSpeeds((await heroData(hd.revid))[hero.key]) },
+        content: { [hero.key]: fillDashSpeeds((await heroData(hd.revid, signal))[hero.key]) },
       };
-      const { css, doc } = await parse(infobox, hero.name, sandbox);
+      const { css, doc } = await parse(infobox, hero.name, sandbox, signal);
       const card = doc.querySelector('.infobox-h');
       if (!card) throw new Error('hero card missing');
       return { css, html: card.outerHTML };
     }
 
-    const render = memo(async (revid: number): Promise<Rendering> => {
+    const render = memo(async (revid: number, signal): Promise<Rendering> => {
       const patch = revisions.find((r) => r.revid === revid);
       if (!patch) throw new Error(`r${revid} is not a ${hero.name} revision`);
-      const slice = hoistHeaders(structuredClone(await abilitiesAt(revid)));
+      const slice = hoistHeaders(structuredClone(await abilitiesAt(revid, signal)));
       // only the hero's slice is sent: it renders identically to the full file, but ~100x smaller
-      const { css, cards } = await renderAbilities(PAGES.abilities, { [hero.key]: slice }, slice);
+      const { css, cards } = await renderAbilities(PAGES.abilities, { [hero.key]: slice }, slice, signal);
 
       const langPatch = matchRevision(langPatches, patch);
       // the newest translations are what the renderer already used
       if (langPatch && langPatch !== langPatches.at(-1)) {
         try {
-          const [langCards, current] = await Promise.all([renderWithLang(langPatch.revid), abilitiesAt(latest.revid)]);
+          const [langCards, current] = await Promise.all([
+            renderWithLang(langPatch.revid, signal),
+            abilitiesAt(latest.revid, signal),
+          ]);
           slots.forEach((s, i) => {
             const card = cards[i], langCard = langCards[i], oldAb = slice[s], curAb = current[s];
             if (card && langCard && oldAb && curAb) spliceDescriptions(card, langCard, oldAb, curAb);
           });
         } catch (e) {
+          signal.throwIfAborted();
           console.warn('old translations unavailable, showing current texts', e);
         }
       }
 
-      const heroCard = await renderHeroCard(patch).catch((e: unknown) => {
+      const heroCard = await renderHeroCard(patch, signal).catch((e: unknown) => {
+        signal.throwIfAborted();
         console.warn('hero card unavailable', e);
         return null;
       });

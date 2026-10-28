@@ -43,29 +43,73 @@ interface ParseResponse {
 
 export const errorMessage = (e: unknown): string => e instanceof Error ? e.message : String(e);
 
-async function api<T>(params: Record<string, string | number>, post = false): Promise<T> {
+async function api<T>(params: Record<string, string | number>, post: boolean, signal?: AbortSignal): Promise<T> {
   const p = new URLSearchParams({ format: 'json', formatversion: '2', origin: '*' });
   for (const [k, v] of Object.entries(params)) p.set(k, String(v));
-  const r = await (post ? fetch(API, { method: 'POST', body: p }) : fetch(`${API}?${p.toString()}`));
+  const r =
+    await (post
+      ? fetch(API, { method: 'POST', body: p, signal: signal ?? null })
+      : fetch(`${API}?${p.toString()}`, { signal: signal ?? null }));
   if (!r.ok) throw new Error(`wiki API ${r.status}`);
   const j = (await r.json()) as T & { error?: { info: string } };
   if (j.error) throw new Error(j.error.info);
   return j;
 }
 
-/** Caches a promise per key, and forgets failed ones so they can be retried. */
-export function memo<K, V>(fn: (key: K) => Promise<V>): (key: K) => Promise<V> {
-  const cache = new Map<K, Promise<V>>();
-  return (key) => {
-    let p = cache.get(key);
-    if (!p) {
-      p = fn(key);
-      cache.set(key, p);
-      p.catch(() => {
-        cache.delete(key);
-      });
+/**
+ * Caches a promise per key, and forgets failed ones so they can be retried. Callers share the work, so it is only
+ * aborted (and forgotten) once every caller waiting on it has aborted; a caller without a signal keeps it alive.
+ */
+export function memo<K, V>(
+  fn: (key: K, signal: AbortSignal) => Promise<V>,
+): (key: K, signal?: AbortSignal) => Promise<V> {
+  interface Job {
+    promise: Promise<V>;
+    abort: AbortController;
+    waiters: number;
+    settled: boolean;
+  }
+  const cache = new Map<K, Job>();
+  const forget = (key: K, job: Job) => {
+    if (cache.get(key) === job) cache.delete(key);
+  };
+  return (key, signal) => {
+    if (signal?.aborted === true) return Promise.reject(signal.reason as Error);
+    let job = cache.get(key);
+    if (!job) {
+      const abort = new AbortController();
+      const j: Job = { promise: fn(key, abort.signal), abort, waiters: 0, settled: false };
+      j.promise.then(
+        () => {
+          j.settled = true;
+        },
+        () => {
+          j.settled = true;
+          forget(key, j);
+        },
+      );
+      cache.set(key, j);
+      job = j;
     }
-    return p;
+    if (!signal) {
+      job.waiters = Infinity;
+      return job.promise;
+    }
+    const j = job;
+    j.waiters++;
+    return new Promise<V>((resolve, reject) => {
+      const onAbort = () => {
+        reject(signal.reason as Error);
+        if (--j.waiters === 0 && !j.settled) {
+          j.abort.abort(signal.reason);
+          forget(key, j);
+        }
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      j.promise.then(resolve, reject).finally(() => {
+        signal.removeEventListener('abort', onAbort);
+      });
+    });
   };
 }
 
@@ -85,7 +129,7 @@ export async function listPatches(title: string): Promise<Revision[]> {
       rvdir: 'newer',
       titles: title,
       ...cont,
-    });
+    }, false);
     for (const r of j.query.pages[0]?.revisions ?? []) {
       out.push({ revid: r.revid, timestamp: r.timestamp, comment: r.comment ?? '', user: r.user ?? '' });
     }
@@ -106,16 +150,20 @@ export function matchRevision(list: Revision[], patch: Revision): Revision | und
 const contentOf = (j: QueryResponse): string => j.query.pages[0]?.revisions?.[0]?.slots?.main.content ?? '';
 
 /** Raw wikitext of a page's current revision ('' when missing); redirects are followed. */
-export async function wikitext(title: string): Promise<string> {
+export async function wikitext(title: string, signal?: AbortSignal): Promise<string> {
   return contentOf(
-    await api<QueryResponse>({
-      action: 'query',
-      prop: 'revisions',
-      rvslots: 'main',
-      rvprop: 'content',
-      titles: title,
-      redirects: 1,
-    }),
+    await api<QueryResponse>(
+      {
+        action: 'query',
+        prop: 'revisions',
+        rvslots: 'main',
+        rvprop: 'content',
+        titles: title,
+        redirects: 1,
+      },
+      false,
+      signal,
+    ),
   );
 }
 
@@ -123,14 +171,18 @@ export async function wikitext(title: string): Promise<string> {
  * A JSON data page at one revision (number) or its current one (title); shared by all heroes and items.
  * Read it through the typed accessors in data.ts.
  */
-export const pageJson = memo(async (page: string | number): Promise<unknown> => {
-  const j = await api<QueryResponse>({
-    action: 'query',
-    prop: 'revisions',
-    rvslots: 'main',
-    rvprop: 'content',
-    ...(typeof page === 'number' ? { revids: page } : { titles: page }),
-  });
+export const pageJson = memo(async (page: string | number, signal): Promise<unknown> => {
+  const j = await api<QueryResponse>(
+    {
+      action: 'query',
+      prop: 'revisions',
+      rvslots: 'main',
+      rvprop: 'content',
+      ...(typeof page === 'number' ? { revids: page } : { titles: page }),
+    },
+    false,
+    signal,
+  );
   return JSON.parse(contentOf(j));
 });
 
@@ -143,7 +195,12 @@ export interface Sandbox {
  * Renders wikitext with the wiki's own templates. `sandbox` swaps one page's content for this render only
  * (TemplateSandbox), which is how old data revisions get rendered with the current templates.
  */
-export async function parse(text: string, title: string, sandbox?: Sandbox): Promise<{ css: string; doc: Document }> {
+export async function parse(
+  text: string,
+  title: string,
+  sandbox?: Sandbox,
+  signal?: AbortSignal,
+): Promise<{ css: string; doc: Document }> {
   const sb: Record<string, string> = sandbox
     ? {
       templatesandboxtitle: sandbox.page,
@@ -155,6 +212,7 @@ export async function parse(text: string, title: string, sandbox?: Sandbox): Pro
   const j = await api<ParseResponse>(
     { action: 'parse', prop: 'text', contentmodel: 'wikitext', title, text, ...sb },
     true,
+    signal,
   );
   if (j.parse.text.includes('Lua error')) throw new Error('render failed');
   const doc = new DOMParser().parseFromString(j.parse.text, 'text/html');

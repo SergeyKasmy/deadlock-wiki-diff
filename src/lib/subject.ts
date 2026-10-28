@@ -31,7 +31,8 @@ export interface Subject extends Entry {
   release: Revision | undefined;
   /** number of card rows: the hero/item card plus one per ability */
   slots: number;
-  render: (revid: number) => Promise<Rendering>;
+  /** aborting `signal` cancels the requests no other render still waits on */
+  render: (revid: number, signal?: AbortSignal) => Promise<Rendering>;
 }
 
 export const lastOf = <T>(list: readonly [T, ...T[]]): T => list[list.length - 1] ?? list[0];
@@ -39,7 +40,7 @@ export const lastOf = <T>(list: readonly [T, ...T[]]): T => list[list.length - 1
 /** The heroes or the items: what can be picked, and how to load one. */
 export interface Kind {
   entries: Entry[];
-  open: (entry: Entry) => Promise<Subject>;
+  open: (entry: Entry, signal?: AbortSignal) => Promise<Subject>;
 }
 
 /**
@@ -48,12 +49,13 @@ export interface Kind {
  */
 export async function patchesWith<T>(
   list: Revision[],
-  load: (revid: number) => Promise<T>,
+  load: (revid: number, signal?: AbortSignal) => Promise<T>,
   has: (data: T) => boolean,
+  signal?: AbortSignal,
 ): Promise<[Revision, ...Revision[]]> {
   const at = async (i: number) => {
     const r = list[i];
-    return r !== undefined && has(await load(r.revid));
+    return r !== undefined && has(await load(r.revid, signal));
   };
   let lo = 0, hi = list.length - 1;
   // entries from the start of the history need only this one fetch

@@ -35,22 +35,24 @@ $effect(() => {
   wikiStyle.textContent = [navboxes?.hero.css, navboxes?.item?.css, cardCss].join('\n');
 });
 
-let pickCount = 0;
+/** cancels the previous pick's loading, so switching around doesn't queue up requests to the wiki */
+let pickAbort = new AbortController();
 async function pick(p: Pick, kind: Kind) {
-  const pickId = ++pickCount;
+  pickAbort.abort();
+  const { signal } = (pickAbort = new AbortController());
   picked = p;
   subject = null;
   sides = [null, null];
   history.replaceState(null, '', '#' + p.key);
   setStatus(`Loading ${p.name}…`);
   try {
-    const s = await kind.open(p);
-    if (pickId !== pickCount) return; // another pick was made meanwhile
+    const s = await kind.open(p, signal);
+    if (signal.aborted) return; // another pick was made meanwhile
     // earlier revisions than the release are pre-release data
     revids = [(s.release ?? s.revisions[0]).revid, lastOf(s.revisions).revid];
     subject = s;
   } catch (e) {
-    setStatus(`Failed to load ${p.name}: ${errorMessage(e)}`, true);
+    if (!signal.aborted) setStatus(`Failed to load ${p.name}: ${errorMessage(e)}`, true);
   }
 }
 
@@ -67,26 +69,26 @@ function pickKey(key: string): boolean {
   return false;
 }
 
-// each side renders its revision; a newer selection discards an older one still loading
+// each side renders its revision; a newer selection cancels an older one still loading
 for (const side of [0, 1] as const) {
   $effect(() => {
     const s = subject, revid = revids[side];
     if (!s) return;
-    let stale = false;
+    const abort = new AbortController();
     setStatus(`Loading r${revid}…`);
-    s.render(revid).then(
+    s.render(revid, abort.signal).then(
       (r) => {
-        if (stale) return;
+        if (abort.signal.aborted) return;
         cardCss = r.css;
         sides = side === 0 ? [r, sides[1]] : [sides[0], r];
         setStatus('');
       },
       (e: unknown) => {
-        if (!stale) setStatus(`Failed to load r${revid}: ${errorMessage(e)}`, true);
+        if (!abort.signal.aborted) setStatus(`Failed to load r${revid}: ${errorMessage(e)}`, true);
       },
     );
     return () => {
-      stale = true;
+      abort.abort();
     };
   });
 }

@@ -80,31 +80,32 @@ export async function itemKind(): Promise<Kind> {
   );
 
   /** Either file at `r`, as an item card; legacy revisions are converted. */
-  async function cardAt(item: Entry, r: Revision): Promise<ItemCard | undefined> {
-    if (r.legacy !== true) return (await itemCards(r.revid))[item.key];
-    const old = (await itemData(r.revid))[item.key];
+  async function cardAt(item: Entry, r: Revision, signal: AbortSignal): Promise<ItemCard | undefined> {
+    if (r.legacy !== true) return (await itemCards(r.revid, signal))[item.key];
+    const old = (await itemData(r.revid, signal))[item.key];
     if (old?.['Name'] === undefined) return undefined;
-    const layout = (await itemCards(layoutRevid))[item.key];
+    const layout = (await itemCards(layoutRevid, signal))[item.key];
     if (!layout) throw new Error(`${item.name} has no card layout`);
     return legacyToCard(old, layout);
   }
 
-  async function open(item: Entry): Promise<Subject> {
+  async function open(item: Entry, signal?: AbortSignal): Promise<Subject> {
     const revisions = await patchesWith(
       allPatches,
-      (revid) => itemCards(revid),
+      itemCards,
       (d) => d[item.key]?.Name !== undefined,
+      signal,
     );
 
     // An item is a single card; |default=1 makes the wiki skip its Default/Enhanced tabs, which need the wiki's JS.
-    const render = memo(async (revid: number): Promise<Rendering> => {
+    const render = memo(async (revid: number, signal): Promise<Rendering> => {
       const r = revisions.find((r) => r.revid === revid);
-      const slice = r && await cardAt(item, r);
+      const slice = r && await cardAt(item, r, signal);
       if (slice?.Name === undefined) throw new Error(`${item.name} is not in r${revid} yet, pick a later revision`);
       const { css, doc } = await parse(`{{Infobox item/auto|${slice.Name}|default=1}}`, item.name, {
         page: PAGES.items,
         content: { [item.key]: slice },
-      });
+      }, signal);
       const card = doc.querySelector('.infobox_item');
       if (!card) throw new Error('item card missing');
       // the wiki fills cost and tier from the current item data, whatever page is swapped in, so the old values are written in afterwards
