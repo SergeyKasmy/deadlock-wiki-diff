@@ -71,23 +71,30 @@ function pickKey(key: string): boolean {
 
 // each side renders its revision; a newer selection cancels an older one still loading
 for (const side of [0, 1] as const) {
+  let rendered: Subject | null = null;
   $effect(() => {
     const s = subject, revid = revids[side];
     if (!s) return;
     const abort = new AbortController();
     setStatus(`Loading r${revid}…`);
-    s.render(revid, abort.signal).then(
-      (r) => {
-        if (abort.signal.aborted) return;
-        cardCss = r.css;
-        sides = side === 0 ? [r, sides[1]] : [sides[0], r];
-        setStatus('');
-      },
-      (e: unknown) => {
-        if (!abort.signal.aborted) setStatus(`Failed to load r${revid}: ${errorMessage(e)}`, true);
-      },
-    );
+    // arrowing through a select changes the revision on every step, so a revision change waits to see if it stays
+    const delay = s === rendered ? 250 : 0;
+    rendered = s;
+    const timer = setTimeout(() => {
+      s.render(revid, abort.signal).then(
+        (r) => {
+          if (abort.signal.aborted) return;
+          cardCss = r.css;
+          sides = side === 0 ? [r, sides[1]] : [sides[0], r];
+          setStatus('');
+        },
+        (e: unknown) => {
+          if (!abort.signal.aborted) setStatus(`Failed to load r${revid}: ${errorMessage(e)}`, true);
+        },
+      );
+    }, delay);
     return () => {
+      clearTimeout(timer);
       abort.abort();
     };
   });
