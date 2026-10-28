@@ -241,9 +241,30 @@ function spliceDescriptions(card, langCard, oldAb, curAb) {
   });
 }
 
+// Data:ItemCards.json only exists since 2026-03-02; older patches are in Data:ItemData.json, a flat file with string
+// numbers and no tooltip layout. The card needs that layout (Info/Main/Alt), so it is taken from the item's first
+// ItemCards revision and the old values are written over it.
+// shortcut: stats that old data has but the layout lacks are dropped, and layout changes before March are not shown; port the Info grouping if that matters.
+const num = v => typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v) ? +v : v;
+function legacyToCard(old, layout) {
+  const card = structuredClone(layout), val = k => num(old[k]);
+  for (const k of ['Name', 'Description', 'Cost', 'Tier', 'Slot', 'Activation', 'Components', 'TargetTypes', 'ShopFilters']) if (k in old) card[k] = num(old[k]);
+  card.IsDisabled = old.IsDisabled ?? old.Disabled ?? false;
+  for (const info of Object.values(card).filter(v => v?.Main))
+    for (const list of ['Main', 'Alt']) info[list] = info[list].filter(e => old[e.Key] !== undefined).map(e => ({ ...e, Value: val(e.Key) }));
+  for (const [k, e] of Object.entries(card.Other ?? {})) if (old[k] === undefined) delete card.Other[k]; else e.Value = val(k);
+  card.Upgrades = Object.fromEntries(Object.entries(old.PropertyUpgrades ?? {}).filter(([k]) => k in (layout.Upgrades ?? {})).map(([k, v]) => [k, num(v)]));
+  return card;
+}
+
 // An item is a single card; |default=1 makes the wiki skip its Default/Enhanced tabs, which need the wiki's JS.
 async function renderItem(rev) {
-  const slice = (await pageJson(null, rev))[HERO.key];
+  let slice = (await pageJson(null, rev))[HERO.key];
+  if (slice?.Name && itemRevs.find(r => r.revid === rev).legacy) {
+    const layout = (await pageJson(null, itemRevs.find(r => !r.legacy).revid))[HERO.key];
+    if (!layout) throw new Error(`${HERO.name} has no card layout`);
+    slice = legacyToCard(slice, layout);
+  }
   if (!slice?.Name) throw new Error(`${HERO.name} is not in r${rev} yet, pick a later revision`);
   const { css, doc } = await parseWiki(`{{Infobox item/auto|${slice.Name}|default=1}}`, ITEMS_PAGE, JSON.stringify({ [HERO.key]: slice }));
   const card = doc.querySelector('.infobox_item');
@@ -626,7 +647,12 @@ async function loadSide(s) {
     allRevs = (await listRevisions(DATA_PAGE)).filter(r => /^deadbot v/i.test(r.comment || '')); // other edits are not game patches
     // optional: without them old cards keep current texts / stats
     [langRevs, heroRevs] = await Promise.all([LANG_PAGE, HERODATA_PAGE].map(t => listRevisions(t).catch(() => [])));
-    itemRevs = (await listRevisions(ITEMS_PAGE).catch(() => [])).filter(r => /^deadbot v/i.test(r.comment || ''));
+    const deadbotPatches = l => l.filter(r => /^deadbot v/i.test(r.comment || ''));
+    itemRevs = deadbotPatches(await listRevisions(ITEMS_PAGE).catch(() => []));
+    if (itemRevs.length) { // the pre-ItemCards history, converted on render by legacyToCard
+      const legacy = deadbotPatches(await listRevisions('Data:ItemData.json').catch(() => [])).filter(r => r.timestamp < itemRevs[0].timestamp);
+      itemRevs = [...legacy.map(r => ({ ...r, legacy: true })), ...itemRevs];
+    }
     [heroes, items] = await Promise.all([listHeroes(), itemRevs.length ? listItems().catch(() => []) : []]);
     [0, 1].forEach(s => $('sel-' + s).addEventListener('change', () => loadSide(s)));
     $('hl').addEventListener('change', recompute);
