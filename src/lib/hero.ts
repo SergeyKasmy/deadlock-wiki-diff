@@ -108,6 +108,32 @@ function spliceDescriptions(card: Element, langCard: Element, oldAb: Ability, cu
   });
 }
 
+/**
+ * Upgrades whose text was dropped from the current data (no DescKey) have no element in the old-translation render to
+ * copy from, so the old text is rendered on its own into the old-data card's upgrade. Returns the work to await.
+ */
+function upgradeTextsMissingNow(
+  card: Element,
+  oldAb: Ability,
+  curAb: Ability,
+  texts: Record<string, string>,
+  title: string,
+  signal: AbortSignal,
+): Promise<void>[] {
+  if (oldAb.Key !== curAb.Key) return [];
+  return [1, 2, 5].flatMap((cost, i) => {
+    const dk = oldAb.Upgrades[i]?.['DescKey'];
+    const text = typeof dk === 'string' ? texts[dk] : undefined;
+    const dst = card.querySelector(`#ability-upgrade-${cost} .ac-upgrade-desc`);
+    if (text === undefined || curAb.Upgrades[i]?.['DescKey'] !== undefined || !dst) return [];
+    return [
+      parse(text, title, undefined, signal).then(({ doc }) => {
+        dst.innerHTML = doc.querySelector('p')?.innerHTML ?? text;
+      }),
+    ];
+  });
+}
+
 export async function heroKind(): Promise<Kind> {
   const [abilityPatches, entries, langPatches, heroDataPatches] = await Promise.all([
     listPatches(PAGES.abilities),
@@ -176,7 +202,9 @@ export async function heroKind(): Promise<Kind> {
     const renderWithLang = memo(async (langRevid: number, signal) => {
       const texts = await lang(langRevid, signal);
       const keep = Object.fromEntries(
-        Object.entries(texts).filter(([k]) => k.startsWith(langPrefix) || descKeys.has(k)),
+        Object.entries(texts).filter(([k]) => k.startsWith(langPrefix) || descKeys.has(k)).map((
+          [k, v],
+        ) => [k, v.replace(/\{\{[^{}]*\}\}/g, (t) => t.replaceAll('|', '{{!}}'))]), // the card module cuts text at a template's `|`
       );
       return (await renderAbilities(PAGES.lang, keep, head, signal)).cards;
     });
@@ -223,11 +251,19 @@ export async function heroKind(): Promise<Kind> {
         });
         const [{ slice, css, cards }, texts, heroCard] = await Promise.all([abilities, oldTexts, heroCardP]);
 
-        if (texts) {
+        if (texts && langPatch) {
           const [langCards, current] = texts;
+          const oldLang = await lang(langPatch.revid, sig);
+          const extra: Promise<void>[] = [];
           slots.forEach((s, i) => {
             const card = cards[i], langCard = langCards[i], oldAb = slice[s], curAb = current[s];
-            if (card && langCard && oldAb && curAb) spliceDescriptions(card, langCard, oldAb, curAb);
+            if (!card || !langCard || !oldAb || !curAb) return;
+            spliceDescriptions(card, langCard, oldAb, curAb);
+            extra.push(...upgradeTextsMissingNow(card, oldAb, curAb, oldLang, hero.name, sig));
+          });
+          await Promise.all(extra).catch((e: unknown) => {
+            sig.throwIfAborted();
+            console.warn('old upgrade texts unavailable', e);
           });
         }
         return {
