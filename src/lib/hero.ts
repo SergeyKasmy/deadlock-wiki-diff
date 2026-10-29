@@ -202,7 +202,10 @@ export async function heroKind(): Promise<Kind> {
     const renderWithLang = memo(async (langRevid: number, signal) => {
       const texts = await lang(langRevid, signal);
       const keep = Object.fromEntries(
-        Object.entries(texts).filter(([k]) => k.startsWith(langPrefix) || descKeys.has(k)).map((
+        // InlineAttribute_*: the labels Module:Lang puts next to {g:citadel_inline_attribute:'…'} icons
+        Object.entries(texts).filter(([k]) =>
+          k.startsWith(langPrefix) || k.startsWith('InlineAttribute_') || descKeys.has(k)
+        ).map((
           [k, v],
         ) => [k, v.replace(/\{\{[^{}]*\}\}/g, (t) => t.replaceAll('|', '{{!}}'))]), // the card module cuts text at a template's `|`
       );
