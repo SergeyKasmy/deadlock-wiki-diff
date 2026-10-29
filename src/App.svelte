@@ -142,15 +142,20 @@ void (async () => {
       }),
     ]);
     kinds = { hero, item };
-    const [heroNav, itemNav] = await Promise.all([
-      heroNavbox(hero.entries),
-      item && item.entries.length > 0 ? itemNavbox(item.entries) : null,
-    ]);
-    navboxes = { hero: heroNav, item: itemNav };
+    // picked before the navboxes load: they only feed the picker and thumbnail, and take seconds to render
     // the URL hash keeps the pick across reloads
     if (!pickKey(hashKey)) {
       wanted = null; // the revisions belonged to a pick that doesn't exist
       if (hero.entries[0]) pickKey(hero.entries[0].key);
+    }
+    try {
+      const [heroNav, itemNav] = await Promise.all([
+        heroNavbox(hero.entries),
+        item && item.entries.length > 0 ? itemNavbox(item.entries) : null,
+      ]);
+      navboxes = { hero: heroNav, item: itemNav };
+    } catch (e) {
+      setStatus(`Failed to load the hero and item picker: ${errorMessage(e)}`, true);
     }
   } catch (e) {
     setStatus(`Failed to load revision list: ${errorMessage(e)}`, true);
