@@ -95,6 +95,11 @@ h2 {
 .side :global(.infobox-h-title-hero-tornbox) {
   display: none;
 }
+/* Item cards are masked with that same kind of blocked image. Firefox treats a mask that fails to load as fully
+   transparent and hides the whole card (Chrome ignores it), so the mask is dropped and the card keeps square edges. */
+.side :global(.infobox_item .infobox-table) {
+  mask-image: none;
+}
 .side :global(.diff-del) {
   background: rgba(255, 70, 70, 0.35);
   border-radius: 2px;
