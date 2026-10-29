@@ -102,12 +102,16 @@ export async function itemKind(): Promise<Kind> {
       const r = revisions.find((r) => r.revid === revid);
       const slice = r && await cardAt(item, r, signal);
       if (slice?.Name === undefined) throw new Error(`${item.name} is not in r${revid} yet, pick a later revision`);
-      const { css, doc } = await parse(`{{Infobox item/auto|${slice.Name}|default=1}}`, item.name, {
+      // Module:Infobox item maps renamed items' old names to the new ones (Backstabber → Stalker) before looking them up,
+      // so an old name finds nothing; the current name goes in and the old one is written into the header afterwards
+      const { css, doc } = await parse(`{{Infobox item/auto|${item.name}|default=1}}`, item.name, {
         page: PAGES.items,
-        content: { [item.key]: slice },
+        content: { [item.key]: { ...slice, Name: item.name } },
       }, signal);
       const card = doc.querySelector('.infobox_item');
       if (!card) throw new Error('item card missing');
+      const header = card.querySelector('.infobox-header span');
+      if (header) header.textContent = slice.Name;
       // the wiki fills cost and tier from the current item data, whatever page is swapped in, so the old values are written in afterwards
       setInfoboxValue(card, 'Cost', slice.Cost?.toLocaleString('en-US'));
       setInfoboxValue(card, 'Tier', slice.Tier?.toString());
