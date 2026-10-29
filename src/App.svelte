@@ -61,8 +61,9 @@ async function pick(p: Pick, kind: Kind) {
     if (signal.aborted) return; // another pick was made meanwhile
     // earlier revisions than the release are pre-release data
     // revids grow with time, so the numerically closest revision is the closest in time
+    // a missing or garbled hash revid is NaN or 0, which falls back
     const closest = (revid: number | undefined, fallback: number) =>
-      revid
+      revid !== undefined && revid > 0
         ? s.revisions.reduce((a, b) => Math.abs(b.revid - revid) < Math.abs(a.revid - revid) ? b : a).revid
         : fallback;
     revids = [
@@ -78,8 +79,11 @@ async function pick(p: Pick, kind: Kind) {
 // revids are 0 until the subject has loaded, which must not overwrite the hash
 $effect(() => {
   if (!picked || !subject) return;
-  const params = new URLSearchParams({ old: String(revids[0]), new: String(revids[1]) });
-  if (highlight) params.set('hl', '1');
+  const params = new URLSearchParams({
+    old: String(revids[0]),
+    new: String(revids[1]),
+    ...(highlight ? { hl: '1' } : {}),
+  });
   history.replaceState(null, '', `#${picked.key}?${params}`);
 });
 
