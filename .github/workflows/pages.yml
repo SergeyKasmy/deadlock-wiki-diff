@@ -1,7 +1,7 @@
-name: "Github Pages"
+name: 'Github Pages'
 on:
   push:
-    branches: ["main"]
+    branches: ['main']
   workflow_dispatch:
 permissions:
   contents: read

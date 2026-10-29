@@ -23,7 +23,16 @@ let subject = $state.raw<Subject | null>(null);
 /** the revisions shown on the old and the new side */
 let revids = $state<[number, number]>([0, 0]);
 let sides = $state.raw<[Rendering | null, Rendering | null]>([null, null]);
-let highlight = $state(false);
+// the URL hash is `#key`, optionally followed by `?old=<revid>&new=<revid>&hl=1`,
+// so reloads and shared links restore the view
+const [hashKey = '', hashQuery = ''] = location.hash.slice(1).split('?');
+const hashParams = new URLSearchParams(hashQuery);
+let highlight = $state(hashParams.get('hl') === '1');
+/** revisions from the hash, applied to the first pick only: revids mean nothing for any other hero or item */
+let wanted: { old: number; new: number } | null = {
+  old: Number(hashParams.get('old')),
+  new: Number(hashParams.get('new')),
+};
 /** the cards' TemplateStyles; identical across revisions */
 let cardCss = $state('');
 
@@ -39,6 +48,8 @@ $effect(() => {
 let pickAbort = new AbortController();
 async function pick(p: Pick, kind: Kind) {
   pickAbort.abort();
+  const hashed = wanted;
+  wanted = null;
   const { signal } = (pickAbort = new AbortController());
   picked = p;
   subject = null;
@@ -49,12 +60,28 @@ async function pick(p: Pick, kind: Kind) {
     const s = await kind.open(p, signal);
     if (signal.aborted) return; // another pick was made meanwhile
     // earlier revisions than the release are pre-release data
-    revids = [(s.release ?? s.revisions[0]).revid, lastOf(s.revisions).revid];
+    // revids grow with time, so the numerically closest revision is the closest in time
+    const closest = (revid: number | undefined, fallback: number) =>
+      revid
+        ? s.revisions.reduce((a, b) => Math.abs(b.revid - revid) < Math.abs(a.revid - revid) ? b : a).revid
+        : fallback;
+    revids = [
+      closest(hashed?.old, (s.release ?? s.revisions[0]).revid),
+      closest(hashed?.new, lastOf(s.revisions).revid),
+    ];
     subject = s;
   } catch (e) {
     if (!signal.aborted) setStatus(`Failed to load ${p.name}: ${errorMessage(e)}`, true);
   }
 }
+
+// revids are 0 until the subject has loaded, which must not overwrite the hash
+$effect(() => {
+  if (!picked || !subject) return;
+  const params = new URLSearchParams({ old: String(revids[0]), new: String(revids[1]) });
+  if (highlight) params.set('hl', '1');
+  history.replaceState(null, '', `#${picked.key}?${params}`);
+});
 
 /** Picks the hero or item with `key`; false when there is none. */
 function pickKey(key: string): boolean {
@@ -121,7 +148,10 @@ void (async () => {
     ]);
     navboxes = { hero: heroNav, item: itemNav };
     // the URL hash keeps the pick across reloads
-    if (!pickKey(location.hash.slice(1)) && hero.entries[0]) pickKey(hero.entries[0].key);
+    if (!pickKey(hashKey)) {
+      wanted = null; // the revisions belonged to a pick that doesn't exist
+      if (hero.entries[0]) pickKey(hero.entries[0].key);
+    }
   } catch (e) {
     setStatus(`Failed to load revision list: ${errorMessage(e)}`, true);
   }
