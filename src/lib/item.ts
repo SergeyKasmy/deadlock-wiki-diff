@@ -1,8 +1,8 @@
 // Items: a single card from Data:ItemCards.json, or from Data:ItemData.json for patches before it existed.
 
-import { type ItemCard, itemCards, itemData, type LegacyItem, type StatLine } from './data.ts';
+import { type ItemCard, itemCards, itemData, lang, type LegacyItem, type StatLine } from './data.ts';
 import { type Entry, type Kind, patchesWith, type Rendering, type Subject } from './subject.ts';
-import { listPatches, memo, PAGES, parse, type Revision } from './wiki.ts';
+import { listPatches, matchRevision, memo, PAGES, parse, type Revision, sandboxTexts } from './wiki.ts';
 
 const num = (v: unknown) => typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v) ? +v : v;
 
@@ -62,8 +62,17 @@ function setInfoboxValue(card: Element, label: string, value: string | undefined
   if (cell) (cell.querySelector('b') ?? cell).textContent = value;
 }
 
+/** The translation keys of a card's descriptions, in card order. */
+const descKeys = (card: ItemCard): string[] =>
+  JSON.stringify(card).match(/"DescKey":"[^"]+"/g)?.map((m) => m.slice(11, -1).replace('#', '')) ?? [];
+
+const DESCRIPTIONS = '.passive-description, .active-description';
+
 export async function itemKind(): Promise<Kind> {
-  const patches = await listPatches(PAGES.items);
+  const [patches, langPatches] = await Promise.all([
+    listPatches(PAGES.items),
+    listPatches(PAGES.lang).catch((): Revision[] => []),
+  ]);
   const firstCards = patches[0];
   if (!firstCards) return { entries: [], open: () => Promise.reject(new Error('no item data')) };
   // the pre-ItemCards history, converted on render by legacyToCard
@@ -96,26 +105,67 @@ export async function itemKind(): Promise<Kind> {
       (d) => d[item.key]?.Name !== undefined,
       signal,
     );
+    const current = (await itemCards(undefined, signal))[item.key];
+    const currentKeys = current ? descKeys(current) : [];
+    // Module:Infobox item maps renamed items' old names to the new ones (Backstabber → Stalker) before looking them up,
+    // so an old name finds nothing; the current name goes in and the old one is written into the header afterwards
+    const template = `{{Infobox item/auto|${item.name}|default=1}}`;
+
+    /** Description elements rendered with old translations but current data. */
+    const renderWithLang = memo(async (langRevid: number, signal) => {
+      const texts = await lang(langRevid, signal);
+      // InlineAttribute_*: the labels Module:Lang puts next to {g:citadel_inline_attribute:'…'} icons
+      const keep = sandboxTexts(texts, (k) => k.startsWith('InlineAttribute_') || currentKeys.includes(k));
+      const { doc } = await parse(template, item.name, { page: PAGES.lang, content: keep }, signal);
+      return [...doc.querySelectorAll(DESCRIPTIONS)];
+    });
 
     // An item is a single card; |default=1 makes the wiki skip its Default/Enhanced tabs, which need the wiki's JS.
     const render = memo(async (revid: number, signal): Promise<Rendering> => {
       const r = revisions.find((r) => r.revid === revid);
       const slice = r && await cardAt(item, r, signal);
       if (slice?.Name === undefined) throw new Error(`${item.name} is not in r${revid} yet, pick a later revision`);
-      // Module:Infobox item maps renamed items' old names to the new ones (Backstabber → Stalker) before looking them up,
-      // so an old name finds nothing; the current name goes in and the old one is written into the header afterwards
-      const { css, doc } = await parse(`{{Infobox item/auto|${item.name}|default=1}}`, item.name, {
-        page: PAGES.items,
-        content: { [item.key]: { ...slice, Name: item.name } },
-      }, signal);
-      const card = doc.querySelector('.infobox_item');
-      if (!card) throw new Error('item card missing');
-      const header = card.querySelector('.infobox-header span');
-      if (header) header.textContent = slice.Name;
-      // the wiki fills cost and tier from the current item data, whatever page is swapped in, so the old values are written in afterwards
-      setInfoboxValue(card, 'Cost', slice.Cost?.toLocaleString('en-US'));
-      setInfoboxValue(card, 'Tier', slice.Tier?.toString());
-      return { css, cards: [{ html: card.outerHTML }] };
+      // Data:ItemCards only names each description's translation key, so the old texts come from a second render with
+      // the old Data:Lang (TemplateSandbox swaps one page per request); the newest is what the first render already uses.
+      // Both renders take about a second, so they run at the same time, and a failure cancels the other.
+      const langPatch = r && matchRevision(langPatches, r);
+      const sameKeys = descKeys(slice).join() === currentKeys.join();
+      const done = new AbortController();
+      const sig = AbortSignal.any([signal, done.signal]);
+      try {
+        const oldTexts = langPatch && langPatch !== langPatches.at(-1) && sameKeys
+          ? renderWithLang(langPatch.revid, sig).catch((e: unknown) => {
+            sig.throwIfAborted();
+            console.warn('old translations unavailable, showing current texts', e);
+            return null;
+          })
+          : null;
+        const [{ css, doc }, texts] = await Promise.all([
+          parse(
+            template,
+            item.name,
+            { page: PAGES.items, content: { [item.key]: { ...slice, Name: item.name } } },
+            sig,
+          ),
+          oldTexts,
+        ]);
+        const infobox = doc.querySelector('.infobox_item');
+        if (!infobox) throw new Error('item card missing');
+        const header = infobox.querySelector('.infobox-header span');
+        if (header) header.textContent = slice.Name;
+        // the wiki fills cost and tier from the current item data, whatever page is swapped in, so the old values are written in afterwards
+        setInfoboxValue(infobox, 'Cost', slice.Cost?.toLocaleString('en-US'));
+        setInfoboxValue(infobox, 'Tier', slice.Tier?.toString());
+        if (texts) {
+          infobox.querySelectorAll(DESCRIPTIONS).forEach((dst, i) => {
+            const src = texts[i];
+            if (src) dst.innerHTML = src.innerHTML;
+          });
+        }
+        return { css, cards: [{ html: infobox.outerHTML }] };
+      } finally {
+        done.abort();
+      }
     });
 
     return { ...item, kind: 'item', revisions, release: undefined, slots: 1, render };

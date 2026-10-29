@@ -12,7 +12,7 @@ import {
   SLOTS,
 } from './data.ts';
 import { type Entry, type Kind, lastOf, patchesWith, type Rendering, type Subject } from './subject.ts';
-import { listPatches, matchRevision, memo, PAGES, parse, type Revision, wikitext } from './wiki.ts';
+import { listPatches, matchRevision, memo, PAGES, parse, type Revision, sandboxTexts, wikitext } from './wiki.ts';
 
 /** Every playable hero with ability data, from the wiki's current data, so new heroes show up on their own. */
 async function listHeroes(): Promise<Entry[]> {
@@ -201,13 +201,10 @@ export async function heroKind(): Promise<Kind> {
     /** Cards rendered with old translations but current data: only their description elements are used. */
     const renderWithLang = memo(async (langRevid: number, signal) => {
       const texts = await lang(langRevid, signal);
-      const keep = Object.fromEntries(
-        // InlineAttribute_*: the labels Module:Lang puts next to {g:citadel_inline_attribute:'…'} icons
-        Object.entries(texts).filter(([k]) =>
-          k.startsWith(langPrefix) || k.startsWith('InlineAttribute_') || descKeys.has(k)
-        ).map((
-          [k, v],
-        ) => [k, v.replace(/\{\{[^{}]*\}\}/g, (t) => t.replaceAll('|', '{{!}}'))]), // the card module cuts text at a template's `|`
+      // InlineAttribute_*: the labels Module:Lang puts next to {g:citadel_inline_attribute:'…'} icons
+      const keep = sandboxTexts(
+        texts,
+        (k) => k.startsWith(langPrefix) || k.startsWith('InlineAttribute_') || descKeys.has(k),
       );
       return (await renderAbilities(PAGES.lang, keep, head, signal)).cards;
     });

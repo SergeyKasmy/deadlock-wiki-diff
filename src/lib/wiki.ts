@@ -204,6 +204,14 @@ if (import.meta.env.DEV) {
   }
 }
 
+/** The translations `keep` accepts, ready to swap in for Data:Lang. */
+export const sandboxTexts = (texts: Record<string, string>, keep: (key: string) => boolean): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(texts).filter(([k]) => keep(k))
+      // the card modules cut text at a template's `|`
+      .map(([k, v]) => [k, v.replace(/\{\{[^{}]*\}\}/g, (t) => t.replaceAll('|', '{{!}}'))]),
+  );
+
 export interface Sandbox {
   page: string;
   content: unknown;
