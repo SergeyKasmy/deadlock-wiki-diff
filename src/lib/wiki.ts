@@ -186,6 +186,24 @@ export const pageJson = memo(async (page: string | number, signal): Promise<unkn
   return JSON.parse(contentOf(j));
 });
 
+/**
+ * Drops every mask declaration. Masks are fetched in CORS mode, and cdn.deadlock.wiki only allows its own origin, so
+ * they always fail here; Firefox then hides the whole masked element, so unmasked (square) is the best we can show.
+ * Quoted values are skipped whole, since data: URIs contain semicolons.
+ */
+export const stripMasks = (css: string): string =>
+  css.replace(/(?<=[{;\s])(?:-webkit-)?mask(?:-[a-z-]+)?\s*:(?:"[^"]*"|'[^']*'|[^;}"'])*;?/g, '');
+
+if (import.meta.env.DEV) {
+  const out = stripMasks(
+    `.a{color:red;mask-image:url("data:a;b");-webkit-mask:url(x) no-repeat}.b{--mask-x:1;mask-size:1px;top:0}` +
+      `@supports (mask-image:none){.c{mask:none}}`,
+  );
+  if (out !== `.a{color:red;}.b{--mask-x:1;top:0}@supports (mask-image:none){.c{}}`) {
+    throw new Error(`stripMasks self-check failed: ${out}`);
+  }
+}
+
 export interface Sandbox {
   page: string;
   content: unknown;
@@ -217,7 +235,7 @@ export async function parse(
   if (j.parse.text.includes('Lua error')) throw new Error('render failed');
   const doc = new DOMParser().parseFromString(j.parse.text, 'text/html');
   const styles = [...doc.querySelectorAll('style')];
-  const css = styles.map((s) => s.textContent).join('\n');
+  const css = stripMasks(styles.map((s) => s.textContent).join('\n'));
   for (const s of styles) s.remove();
   return { css, doc };
 }

@@ -11,14 +11,12 @@ body {
 
 /* ---- fixes for wiki HTML rendered outside the wiki ---- */
 
-/* The hero navbox's card masks come from cdn.deadlock.wiki, which blocks CORS requests from other origins, so the
-   card frame is drawn from its plain background image instead. */
+/* The hero navbox's card masks can't load here (see stripMasks in wiki.ts), so the card frame is drawn from its plain
+   background image instead. */
 .mw-parser-output .HeroCard .CardBacker {
-  mask-image: none;
   border-radius: 5%;
 }
 .mw-parser-output .HeroCard .CardShape {
-  mask-image: none;
   background-color: transparent;
 }
 .mw-parser-output .HeroCard:not(.NewHero) .NewLabel {

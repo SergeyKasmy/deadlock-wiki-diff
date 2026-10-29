@@ -90,15 +90,10 @@ h2 {
 .side :global(a) {
   color: var(--link-color);
 }
-/* The wiki masks this backdrop with a torn-paper PNG. CSS masks are fetched in CORS mode and cdn.deadlock.wiki only
-   allows its own origin, so the mask is blocked here and the unmasked backdrop would show as a stray shape. */
+/* The wiki masks this backdrop into a torn-paper shape. Wiki masks can't load here (see stripMasks), and the
+   unmasked backdrop would show as a stray shape. */
 .side :global(.infobox-h-title-hero-tornbox) {
   display: none;
-}
-/* Item cards are masked with that same kind of blocked image. Firefox treats a mask that fails to load as fully
-   transparent and hides the whole card (Chrome ignores it), so the mask is dropped and the card keeps square edges. */
-.side :global(.infobox_item .infobox-table) {
-  mask-image: none;
 }
 .side :global(.diff-del) {
   background: rgba(255, 70, 70, 0.35);
