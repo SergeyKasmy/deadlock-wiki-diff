@@ -1,10 +1,17 @@
 :root {
   color-scheme: dark;
   --text: oklch(0.953948 0.0168318 58.6608); /* the wiki's text colour */
+  --page: #241c16; /* the wiki's content background; the cards' dark backgrounds are made to stand out against it */
 }
 body {
   margin: 0;
-  background: #141414;
+  /* a column so that <main> can fill the window's height, which takes its old/new separator line to the bottom */
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  /* grows with <main> when the cards don't fit the window, so the header spans the scrolled width too */
+  min-width: min-content;
+  background: var(--page);
   color: var(--text);
   font: 15px/1.4 Inter, system-ui, sans-serif;
 }

@@ -208,8 +208,8 @@ header {
   position: sticky;
   top: 0;
   z-index: 10;
-  background: #141414ee;
-  backdrop-filter: blur(6px);
+  /* opaque: it hides the body's separator line */
+  background: var(--page);
   border-bottom: 1px solid #2a2a2a;
   padding: 10px 16px;
 }
@@ -274,8 +274,21 @@ button {
   color: #ff8a8a;
 }
 main {
-  max-width: 1100px;
+  position: relative;
+  flex: 1 0 auto;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 1132px;
+  /* never narrower than the two card columns side by side: the page scrolls sideways instead */
+  min-width: min-content;
   margin: 0 auto;
   padding: 8px 16px 40px;
+}
+/* separates old from new; the columns are equal and the padding symmetric, so 50% is the middle of their gap */
+main::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 50%;
+  border-left: 1px solid #4a3b2e;
 }
 </style>

@@ -72,17 +72,11 @@ h2 {
   grid-template-columns: 1fr 1fr;
   gap: 16px;
 }
-@media (max-width: 1080px) {
-  .pair {
-    grid-template-columns: 1fr;
-  }
-}
 /* the wiki's card CSS is scoped to .mw-parser-output; the colour/font pin keeps cards identical to the wiki */
 .side {
   display: flex;
   justify-content: center;
   align-items: flex-start;
-  min-width: 0;
   color: var(--text);
   font-family: Inter, sans-serif;
   --link-color: #60f8b3;
